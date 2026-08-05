@@ -29,6 +29,11 @@ nav button i { min-width:22px; padding:1px 7px; border-radius:20px; color:#e1e4e
 .metric-grid article { display:flex; flex-direction:column; min-height:145px; padding:20px; border:1px solid var(--line); border-radius:14px; background:linear-gradient(145deg,#191c23,#14171c); }
 .metric-grid span,.metric-grid small { color:var(--muted); }
 .metric-grid strong { margin:auto 0 1px; font-size:29px; font-variant-numeric:tabular-nums; }
+.community-impact-card { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:16px; margin-bottom:18px; padding:18px 21px; border:1px solid rgba(37,244,238,.22); border-radius:14px; background:linear-gradient(110deg,rgba(37,244,238,.09),rgba(254,44,85,.06)); }
+.impact-mark { display:grid; place-items:center; width:43px; height:43px; border-radius:12px; color:#101216; background:linear-gradient(135deg,var(--cyan),#7af8f3); font-size:23px; font-weight:800; }
+.community-impact-card span,.community-impact-card small { display:block; color:var(--muted); }
+.community-impact-card strong { display:block; margin:2px 0; font-size:17px; }
+.community-impact-card b { color:var(--cyan); font-size:22px; font-variant-numeric:tabular-nums; }
 .panel,.settings-card { border:1px solid var(--line); border-radius:15px; background:var(--card); }
 .panel { padding:22px; }
 .panel-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }

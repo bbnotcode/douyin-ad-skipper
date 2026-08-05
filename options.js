@@ -5,6 +5,12 @@ let state = { ...DEFAULTS };
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 const formatTime = (seconds=0) => `${Math.floor(seconds/60)}:${Math.floor(seconds%60).toString().padStart(2,'0')}`;
+const formatContribution = (seconds=0) => {
+  const rounded=Math.max(0,Math.round(seconds));
+  if(rounded<60)return `${rounded} 秒`;
+  const hours=Math.floor(rounded/3600),minutes=Math.round((rounded%3600)/60);
+  return hours ? `${hours} 小时${minutes?` ${minutes} 分钟`:''}` : `${minutes} 分钟`;
+};
 const allSegments = () => Object.entries(state.localSegments || {}).flatMap(([videoId,segments]) => segments.map((segment,index) => ({...segment,videoId,index})));
 
 function showPage(name) {
@@ -26,10 +32,14 @@ function segmentStatus(segment) { return isPending(segment) ? ['pending','待提
 function renderOverview() {
   const segments = allSegments();
   const duration = segments.reduce((sum,item) => sum + Math.max(0,Number(item.end)-Number(item.start)),0);
+  const submittedSegments=segments.filter((item)=>!isPending(item));
+  const contributedDuration=submittedSegments.reduce((sum,item)=>sum+Math.max(0,Number(item.end)-Number(item.start)),0);
   $('#metricSegments').textContent = segments.length;
   $('#metricVideos').textContent = Object.keys(state.localSegments || {}).filter((id) => state.localSegments[id]?.length).length;
   $('#metricSkips').textContent = Number(state.skippedCount || 0).toLocaleString('zh-CN');
   $('#metricDuration').textContent = formatTime(duration);
+  $('#metricContributionDuration').textContent = formatContribution(contributedDuration);
+  $('#metricContributionCount').textContent = `已提交 ${submittedSegments.length} 个片段`;
   $('#navSegmentCount').textContent = segments.length;
   const recent = [...segments].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,5);
   $('#recentSegments').innerHTML = recent.length ? recent.map((item) => `<div class="recent-item"><div><strong>${escapeHtml(segmentTitle(item))}</strong><span>${escapeHtml(segmentAuthor(item))} · ${formatTime(item.start)}–${formatTime(item.end)}</span></div><span>${item.createdAt ? new Date(item.createdAt).toLocaleDateString('zh-CN') : '旧版片段'}</span></div>`).join('') : '<div class="empty">还没有创建片段。请在抖音播放器控制栏点击标记图标。</div>';
