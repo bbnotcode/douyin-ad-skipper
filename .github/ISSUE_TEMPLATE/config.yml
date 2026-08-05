@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞
+    url: https://github.com/bbnotcode/douyin-ad-skipper/security/advisories/new
+    about: 请使用 GitHub 私密漏洞报告，不要公开披露敏感细节。

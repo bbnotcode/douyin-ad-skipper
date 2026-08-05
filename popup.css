@@ -1,0 +1,26 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; width: 322px; color: #f5f5f7; background: #111318; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { padding: 18px; }
+header { display: flex; gap: 11px; align-items: center; margin-bottom: 18px; }
+.mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; color: #111318; background: linear-gradient(135deg, #25f4ee, #fe2c55); font-size: 20px; font-weight: 900; }
+h1 { margin: 0; font-size: 16px; }
+p { margin: 2px 0 0; color: #969ba8; font-size: 12px; }
+.setting { display: flex; align-items: center; justify-content: space-between; min-height: 47px; padding: 10px 0; border-top: 1px solid #262933; cursor: pointer; }
+.setting.primary { padding: 13px 12px; border: 1px solid #303440; border-radius: 12px; background: #1a1d24; margin-bottom: 8px; }
+.setting span { display: flex; flex-direction: column; }
+.setting small { margin-top: 2px; color: #7f8490; font-size: 11px; }
+input { position: absolute; opacity: 0; }
+i { position: relative; width: 38px; height: 22px; border-radius: 99px; background: #414652; transition: .18s; }
+i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: white; transition: .18s; }
+input:checked + i { background: #fe2c55; }
+input:checked + i::after { transform: translateX(16px); }
+.stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; margin-top:14px; overflow:hidden; border-radius:12px; background:#30333d; }
+.stats-grid div { display:flex; flex-direction:column; align-items:center; padding:13px 8px; background:linear-gradient(135deg,rgba(37,244,238,.10),rgba(254,44,85,.10)); }
+.stats-grid strong { color:white; font-size:24px; }
+.stats-grid span { color:#a4a8b2; font-size:11px; }
+.quick-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+.quick-actions button { padding:10px 7px; border:1px solid #303440; border-radius:9px; color:#e9eaf0; background:#1a1d24; cursor:pointer; }
+.quick-actions button:hover { background:#252933; }
+.quick-actions span { margin-right:4px; color:#25f4ee; }
+.note { margin-top: 12px; text-align: center; }

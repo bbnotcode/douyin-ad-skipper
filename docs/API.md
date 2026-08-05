@@ -1,0 +1,76 @@
+# 社区共享 API 草案
+
+本文档用于讨论，不代表已部署服务。
+
+## 查询片段
+
+```http
+GET /v1/videos/{videoId}/segments
+```
+
+响应：
+
+```json
+{
+  "videoId": "7669344658548047311",
+  "segments": [
+    {
+      "id": "seg_01...",
+      "start": 18.5,
+      "end": 31.2,
+      "category": "sponsor",
+      "status": "trusted",
+      "score": 0.92
+    }
+  ]
+}
+```
+
+## 提交片段
+
+```http
+POST /v1/segments
+Content-Type: application/json
+```
+
+```json
+{
+  "videoId": "7669344658548047311",
+  "start": 18.5,
+  "end": 31.2,
+  "category": "sponsor",
+  "duration": 585.0,
+  "clientRequestId": "随机 UUID"
+}
+```
+
+服务端必须校验数值范围、片段长度、视频时长、重复请求和提交速率。
+
+## 投票
+
+```http
+POST /v1/segments/{segmentId}/votes
+```
+
+```json
+{ "vote": 1 }
+```
+
+`vote` 只能为 `1` 或 `-1`。同一匿名客户端对同一片段只能保留一个当前投票。
+
+## 举报
+
+```http
+POST /v1/segments/{segmentId}/reports
+```
+
+举报原因应使用有限枚举：`wrong_video`、`wrong_time`、`not_ad`、`abuse`、`other`。
+
+## 防滥用最低要求
+
+- IP 与匿名客户端双层限流；
+- 请求体 Schema 校验；
+- 幂等请求 ID；
+- 审核日志；
+- 不向客户端暴露提交者 IP；
+- 候选片段不能因为单次提交立即成为可信片段。

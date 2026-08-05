@@ -1,0 +1,22 @@
+name: 功能建议
+description: 建议新的功能、交互或社区机制
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 需要解决的问题
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: 隐私与滥用风险
+      description: 如果涉及远程 API、数据收集或公开投稿，请说明风险与缓解方式。

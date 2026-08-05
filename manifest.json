@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "抖音广告自动跳过（本地版）",
+  "version": "0.4.0",
+  "description": "跳过抖音网页版广告，并在播放器控制栏中手动标记广告片段。",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.douyin.com/*"],
+  "action": {
+    "default_title": "抖音广告自动跳过",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.douyin.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

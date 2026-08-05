@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>抖音广告跳过 · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><img src="icons/icon-128.png" alt=""><div><strong>抖音广告跳过</strong><span>本地片段助手 · v0.4.0</span></div></div>
+      <nav>
+        <button class="active" data-page="overview"><span>⌂</span>概览</button>
+        <button data-page="segments"><span>≡</span>片段管理 <i id="navSegmentCount">0</i></button>
+        <button data-page="behavior"><span>▶</span>跳过行为</button>
+        <button data-page="appearance"><span>◐</span>界面与提示</button>
+        <button data-page="data"><span>⇅</span>备份与恢复</button>
+        <button data-page="about"><span>ⓘ</span>关于</button>
+      </nav>
+      <div class="privacy">所有片段保存在此浏览器<br>不会上传浏览记录</div>
+    </aside>
+
+    <main class="content">
+      <section class="page active" data-page="overview">
+        <div class="page-head"><div><p class="eyebrow">DASHBOARD</p><h1>本地跳过概览</h1><p>查看标记片段、累计跳过和当前运行状态。</p></div><span class="status-dot">本地模式</span></div>
+        <div class="metric-grid">
+          <article><span>已标记片段</span><strong id="metricSegments">0</strong><small>个时间片段</small></article>
+          <article><span>涉及视频</span><strong id="metricVideos">0</strong><small>个抖音作品</small></article>
+          <article><span>累计跳过</span><strong id="metricSkips">0</strong><small>次自动跳过</small></article>
+          <article><span>标记总时长</span><strong id="metricDuration">0:00</strong><small>预计可节省时间</small></article>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>最近创建</h2><p>最近保存到本地的广告片段</p></div><button class="text-button" data-goto="segments">查看全部 →</button></div>
+          <div id="recentSegments" class="recent-list"></div>
+        </div>
+      </section>
+
+      <section class="page" data-page="segments">
+        <div class="page-head"><div><p class="eyebrow">LOCAL LIBRARY</p><h1>片段管理</h1><p>查看、打开或删除你手动创建的片段。</p></div></div>
+        <div class="toolbar"><label class="search"><span>⌕</span><input id="segmentSearch" placeholder="搜索视频标题、作者或作品 ID"></label><span id="segmentSummary"></span></div>
+        <div id="segmentList" class="segment-list"></div>
+      </section>
+
+      <section class="page" data-page="behavior">
+        <div class="page-head"><div><p class="eyebrow">BEHAVIOR</p><h1>跳过行为</h1><p>决定哪些内容自动跳过。</p></div></div>
+        <div class="settings-card">
+          <label class="setting-row"><div><strong>启用扩展</strong><p>控制所有自动跳过功能</p></div><input id="enabled" type="checkbox"><i></i></label>
+          <label class="setting-row"><div><strong>跳过整条广告</strong><p>识别页面上的“广告 / 商业推广”标识并切换下一条</p></div><input id="skipLabeledAds" type="checkbox"><i></i></label>
+          <label class="setting-row"><div><strong>跳过本地片段</strong><p>播放到手动标记的时间段时自动跳至片段末尾</p></div><input id="skipLocalSegments" type="checkbox"><i></i></label>
+        </div>
+      </section>
+
+      <section class="page" data-page="appearance">
+        <div class="page-head"><div><p class="eyebrow">INTERFACE</p><h1>界面与提示</h1><p>调整播放器反馈与排查工具。</p></div></div>
+        <div class="settings-card">
+          <label class="setting-row"><div><strong>显示跳过提示</strong><p>自动跳过后在播放器顶部显示简短通知</p></div><input id="showToast" type="checkbox"><i></i></label>
+          <label class="setting-row"><div><strong>调试日志</strong><p>将视频识别、按钮挂载与跳过过程输出到网页控制台</p></div><input id="debug" type="checkbox"><i></i></label>
+        </div>
+        <div class="info-card"><span>提示</span><p>播放器标记按钮会嵌入清晰度按钮左侧。点击一次开始创建，再点击青色结束按钮即可保存；红色按钮用于取消。</p></div>
+      </section>
+
+      <section class="page" data-page="data">
+        <div class="page-head"><div><p class="eyebrow">DATA</p><h1>备份与恢复</h1><p>导出片段数据，或迁移到另一台设备。</p></div></div>
+        <div class="data-grid">
+          <article><span class="data-icon">↓</span><h2>导出备份</h2><p>将设置和全部本地片段保存为 JSON 文件。</p><button id="exportData" class="primary-button">导出 JSON</button></article>
+          <article><span class="data-icon">↑</span><h2>导入备份</h2><p>导入由本扩展生成的 JSON，现有同作品数据将被合并。</p><button id="importData" class="secondary-button">选择文件</button><input id="importFile" type="file" accept="application/json" hidden></article>
+        </div>
+        <div class="danger-zone"><div><strong>清空所有本地片段</strong><p>不会重置开关和累计跳过次数，此操作无法撤销。</p></div><button id="clearSegments">清空片段</button></div>
+      </section>
+
+      <section class="page" data-page="about">
+        <div class="page-head"><div><p class="eyebrow">ABOUT</p><h1>关于抖音广告跳过</h1><p>一个完全本地运行的 Chrome 实验扩展。</p></div></div>
+        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p>版本 0.4.0</p><p>目前支持跳过明确标识的整条广告，以及你亲自标记的视频内部片段。没有服务器，不共享片段，也不会上传浏览记录。</p></div></div>
+      </section>
+    </main>
+  </div>
+  <div id="optionsToast" role="status"></div>
+  <script src="options.js"></script>
+</body>
+</html>

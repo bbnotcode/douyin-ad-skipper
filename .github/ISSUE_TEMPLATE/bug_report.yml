@@ -1,0 +1,38 @@
+name: Bug 报告
+description: 报告播放器适配、误跳或界面问题
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: dropdown
+    id: entry
+    attributes:
+      label: 视频入口
+      options: [推荐, 精选, 搜索结果, 用户主页, 视频详情页, 其他]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 扩展版本
+      placeholder: 例如 0.4.0
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请说明实际结果和预期结果。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: "1. 打开…\n2. 点击…\n3. 看到…"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 截图或脱敏日志
+      description: 请勿提交 Cookie、令牌或个人信息。
