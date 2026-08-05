@@ -559,7 +559,7 @@
   (async () => {
     const stored = await chrome.storage.local.get(DEFAULTS);
     settings = { ...DEFAULTS, ...stored };
-    if (/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
+    if (!settings.communityApiBase || /^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
       settings.communityApiBase = DEFAULT_COMMUNITY_API;
       settings.communityEnabled = true;
       await chrome.storage.local.set({ communityApiBase: DEFAULT_COMMUNITY_API, communityEnabled: true });

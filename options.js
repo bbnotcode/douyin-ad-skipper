@@ -186,11 +186,18 @@ async function communityOriginPattern() {
 
 async function renderCommunityStatus() {
   const status=$('#communityStatus');
-  if(!state.communityApiBase){status.textContent='未连接';return}
-  let pattern;
-  try { pattern=`${new URL(state.communityApiBase).origin}/*`; } catch { status.textContent='地址无效'; return; }
+  const button=$('#connectCommunity');
+  const reset=$('#disconnectCommunity');
+  const typed=$('#communityApiBase').value.trim();
+  let typedOrigin,configuredOrigin;
+  try { typedOrigin=new URL(typed).origin;configuredOrigin=new URL(state.communityApiBase).origin; } catch { status.textContent='地址无效';button.textContent='授权并连接';button.disabled=false;return; }
+  const pattern=`${typedOrigin}/*`;
   const granted=await chrome.permissions.contains({origins:[pattern]});
-  status.textContent=granted&&state.communityEnabled?'已启用':granted?'已授权':'权限缺失';
+  const connected=granted&&typedOrigin===configuredOrigin;
+  status.textContent=connected&&state.communityEnabled?'已启用':connected?'已停用':granted?'待连接':'待授权';
+  button.textContent=connected?'已授权':'授权并连接';
+  button.disabled=connected;
+  reset.disabled=typedOrigin===DEFAULT_COMMUNITY_API;
 }
 
 document.querySelectorAll('nav button[data-page]').forEach((button)=>button.addEventListener('click',()=>showPage(button.dataset.page)));
@@ -206,9 +213,12 @@ $('#connectCommunity').addEventListener('click',async()=>{
   const communityApiBase=new URL($('#communityApiBase').value.trim()).origin;state.communityApiBase=communityApiBase;state.communityEnabled=true;
   await chrome.storage.local.set({communityApiBase,communityEnabled:true});syncSettings();toast('社区 API 已连接');
 });
+$('#communityApiBase').addEventListener('input',renderCommunityStatus);
 $('#disconnectCommunity').addEventListener('click',async()=>{
-  if(state.communityApiBase){const pattern=`${new URL(state.communityApiBase).origin}/*`;await chrome.permissions.remove({origins:[pattern]})}
-  state.communityApiBase='';state.communityEnabled=false;await chrome.storage.local.set({communityApiBase:'',communityEnabled:false});syncSettings();toast('已断开社区 API');
+  let oldOrigin='';try{oldOrigin=new URL(state.communityApiBase).origin}catch{}
+  if(oldOrigin&&oldOrigin!==DEFAULT_COMMUNITY_API)await chrome.permissions.remove({origins:[`${oldOrigin}/*`]});
+  state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;
+  await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true});syncSettings();await fetchMyContributions();toast('已恢复默认公共 API');
 });
 $('#segmentSearch').addEventListener('input',renderSegments);
 $('#segmentList').addEventListener('click',async(event)=>{
@@ -221,5 +231,5 @@ $('#importData').addEventListener('click',()=>$('#importFile').click());
 $('#importFile').addEventListener('change',(event)=>{if(event.target.files[0])importData(event.target.files[0]);event.target.value=''});
 $('#clearSegments').addEventListener('click',async()=>{if(confirm('确定清空所有本地片段吗？此操作无法撤销。')){state.localSegments={};await chrome.storage.local.set({localSegments:{}});renderOverview();renderSegments();toast('本地片段已清空')}});
 
-(async()=>{const stored=await chrome.storage.local.get(DEFAULTS);state={...DEFAULTS,...stored};if(/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}state.communityClientId=await getContributorId();syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');await fetchMyContributions()})();
+(async()=>{const stored=await chrome.storage.local.get(DEFAULTS);state={...DEFAULTS,...stored};if(!state.communityApiBase||/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}state.communityClientId=await getContributorId();syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');await fetchMyContributions()})();
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;for(const [key,change] of Object.entries(changes))state[key]=change.newValue;renderOverview()});
