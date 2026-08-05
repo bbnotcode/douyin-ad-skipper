@@ -12,8 +12,9 @@ test('rejects invalid ranges and oversized segments', () => {
   assert.equal(parseSegmentInput({ videoId:'7669344658548047311', start:0, end:601, clientRequestId:'123e4567-e89b-12d3-a456-426614174000' }), null);
 });
 
-test('promotes and disputes using conservative thresholds', () => {
-  assert.equal(statusFromVotes(1,0), 'candidate');
+test('trusts submissions immediately and disputes bad segments', () => {
+  assert.equal(statusFromVotes(0,0), 'trusted');
+  assert.equal(statusFromVotes(1,0), 'trusted');
   assert.equal(statusFromVotes(2,0), 'trusted');
   assert.equal(statusFromVotes(3,1), 'trusted');
   assert.equal(statusFromVotes(1,2), 'disputed');

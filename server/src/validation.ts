@@ -26,9 +26,8 @@ export function parseSegmentInput(value: unknown): SegmentInput | null {
   return { videoId, start, end, duration, category: 'sponsor', clientRequestId };
 }
 
-export function statusFromVotes(upvotes: number, downvotes: number): 'candidate' | 'trusted' | 'disputed' {
+export function statusFromVotes(upvotes: number, downvotes: number): 'trusted' | 'disputed' {
   const total = upvotes + downvotes;
-  if (upvotes >= 2 && total > 0 && upvotes / total >= 0.75) return 'trusted';
   if (downvotes >= 2 && total > 0 && downvotes / total > 0.5) return 'disputed';
-  return 'candidate';
+  return 'trusted';
 }

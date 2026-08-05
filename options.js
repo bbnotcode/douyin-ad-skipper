@@ -1,4 +1,5 @@
-const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, skippedCount:0, localSegments:{}, communityEnabled:false, communityApiBase:'', communityAutoSkipTrusted:true, communityClientId:'' };
+const DEFAULT_COMMUNITY_API='https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
+const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, communityAutoSkipTrusted:true, communityClientId:'' };
 let state = { ...DEFAULTS };
 
 const $ = (selector) => document.querySelector(selector);
@@ -173,5 +174,5 @@ $('#importData').addEventListener('click',()=>$('#importFile').click());
 $('#importFile').addEventListener('change',(event)=>{if(event.target.files[0])importData(event.target.files[0]);event.target.value=''});
 $('#clearSegments').addEventListener('click',async()=>{if(confirm('确定清空所有本地片段吗？此操作无法撤销。')){state.localSegments={};await chrome.storage.local.set({localSegments:{}});renderOverview();renderSegments();toast('本地片段已清空')}});
 
-chrome.storage.local.get(DEFAULTS,(stored)=>{state={...DEFAULTS,...stored};if(!state.communityClientId){state.communityClientId=crypto.randomUUID();chrome.storage.local.set({communityClientId:state.communityClientId})}syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview')});
+chrome.storage.local.get(DEFAULTS,(stored)=>{state={...DEFAULTS,...stored};if(/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}if(!state.communityClientId){state.communityClientId=crypto.randomUUID();chrome.storage.local.set({communityClientId:state.communityClientId})}syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview')});
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;for(const [key,change] of Object.entries(changes))state[key]=change.newValue;renderOverview()});

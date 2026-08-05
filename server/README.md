@@ -1,6 +1,6 @@
 # 社区共享服务端
 
-Cloudflare Workers + D1 的社区片段 API。新片段默认是 `candidate`，达到投票阈值后才会变成 `trusted`。
+Cloudflare Workers + D1 的社区片段 API。新片段提交成功后立即成为 `trusted` 并供其他用户使用；投票与举报用于事后纠错。
 
 ## 本地运行
 
@@ -40,8 +40,7 @@ curl http://localhost:8787/v1/videos/7669344658548047311/segments
 
 ## 可信规则（初版）
 
-- 新提交：`candidate`
-- 至少 2 个赞成票且赞成比例不低于 75%：`trusted`
+- 新提交：`trusted`
 - 至少 2 个反对票且反对比例高于 50%：`disputed`
 - 至少 3 个不同身份举报：`disputed`
 
