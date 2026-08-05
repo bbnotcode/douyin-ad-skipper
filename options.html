@@ -14,6 +14,7 @@
         <button class="active" data-page="overview"><span>⌂</span>概览</button>
         <button data-page="segments"><span>≡</span>片段管理 <i id="navSegmentCount">0</i></button>
         <button data-page="behavior"><span>▶</span>跳过行为</button>
+        <button data-page="community"><span>◎</span>社区共享</button>
         <button data-page="appearance"><span>◐</span>界面与提示</button>
         <button data-page="data"><span>⇅</span>备份与恢复</button>
         <button data-page="about"><span>ⓘ</span>关于</button>
@@ -60,6 +61,20 @@
         <div class="info-card"><span>提示</span><p>播放器标记按钮会嵌入清晰度按钮左侧。点击一次开始创建，再点击青色结束按钮即可保存；红色按钮用于取消。</p></div>
       </section>
 
+      <section class="page" data-page="community">
+        <div class="page-head"><div><p class="eyebrow">COMMUNITY BETA</p><h1>社区共享</h1><p>从社区 API 获取经过确认的广告片段。功能默认关闭。</p></div><span id="communityStatus" class="status-dot">未连接</span></div>
+        <div class="settings-card">
+          <div class="community-connect">
+            <div><strong>社区 API 地址</strong><p>必须是 HTTPS 地址。连接时 Chrome 会询问该域名的访问权限。</p></div>
+            <div class="community-input"><input id="communityApiBase" type="url" placeholder="https://your-worker.workers.dev"><button id="connectCommunity">授权并连接</button></div>
+          </div>
+          <label class="setting-row"><div><strong>启用社区查询</strong><p>只发送当前作品 ID，不上传完整观看历史</p></div><input id="communityEnabled" type="checkbox"><i></i></label>
+          <label class="setting-row"><div><strong>自动跳过可信片段</strong><p>只使用状态为 trusted 的赞助片段，候选片段不会自动跳过</p></div><input id="communityAutoSkipTrusted" type="checkbox"><i></i></label>
+        </div>
+        <div class="community-actions"><button id="disconnectCommunity" class="secondary-button">断开并移除域名权限</button></div>
+        <div class="info-card"><span>隐私设计</span><p>远程查询失败时会立即回退到本地数据。当前扩展不会自动上传你创建的片段；提交与投票客户端将在防滥用机制通过评审后另行实现。</p></div>
+      </section>
+
       <section class="page" data-page="data">
         <div class="page-head"><div><p class="eyebrow">DATA</p><h1>备份与恢复</h1><p>导出片段数据，或迁移到另一台设备。</p></div></div>
         <div class="data-grid">
@@ -71,7 +86,7 @@
 
       <section class="page" data-page="about">
         <div class="page-head"><div><p class="eyebrow">ABOUT</p><h1>关于抖音广告跳过</h1><p>一个完全本地运行的 Chrome 实验扩展。</p></div></div>
-        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p>版本 0.4.0</p><p>目前支持跳过明确标识的整条广告，以及你亲自标记的视频内部片段。没有服务器，不共享片段，也不会上传浏览记录。</p></div></div>
+        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p>版本 0.5.0</p><p>支持本地片段和可选的社区可信片段查询。社区功能默认关闭，当前不会自动上传本地片段。</p></div></div>
       </section>
     </main>
   </div>

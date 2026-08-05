@@ -57,6 +57,7 @@
 .das-player-controls svg { width: 22px; height: 22px; overflow: visible; fill: currentColor; }
 .das-player-controls .das-accent { fill: none; stroke: #25f4ee; stroke-width: 2.4; stroke-linecap: round; }
 .das-player-controls .das-cut { fill: none; stroke: #161823; stroke-width: 2.2; stroke-linecap: round; }
+.das-player-controls .das-light-cut { stroke: #fff; }
 .das-player-controls.das-is-creating .das-control-button[data-action="end"] { color: #25f4ee; }
 .das-player-controls.das-is-creating .das-control-button[data-action="cancel"] { color: #fe2c55; }
 
@@ -80,3 +81,50 @@
 }
 
 .das-player-controls .das-control-button:hover::after { opacity: 1; transform: translate(-50%, 0); }
+
+.das-preview-bar {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.das-preview-segment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 1px;
+  background: #00d400;
+  opacity: .82;
+}
+
+.das-preview-segment.das-pending { background: #007800; }
+.das-preview-segment.das-candidate { background: #b8a900; }
+
+.das-submission-menu {
+  position: absolute;
+  right: 86px;
+  bottom: 64px;
+  z-index: 10020;
+  width: min(360px, calc(100% - 32px));
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px;
+  color: #fff;
+  background: rgba(22,24,29,.96);
+  box-shadow: 0 16px 50px rgba(0,0,0,.45);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.das-submission-menu header { display: flex; align-items: center; justify-content: space-between; font-size: 17px; }
+.das-submission-menu header button { border: 0; color: #aaa; background: transparent; font-size: 24px; cursor: pointer; }
+.das-submission-menu p { margin: 10px 0; color: #b8bac1; }
+.das-submission-menu ol { max-height: 180px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.das-submission-menu li { display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.08); }
+.das-submission-menu li em { color: #9da0a9; font-style: normal; }
+.das-submission-actions { display: flex; gap: 8px; margin-top: 14px; }
+.das-submission-actions button { flex: 1; padding: 9px 10px; border: 0; border-radius: 7px; color: #fff; background: #34363d; cursor: pointer; }
+.das-submission-actions button:first-child { color: #161823; background: #25f4ee; font-weight: 700; }
+.das-submission-actions button:disabled { opacity: .55; cursor: wait; }
