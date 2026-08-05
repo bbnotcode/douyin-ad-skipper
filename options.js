@@ -1,4 +1,4 @@
-const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, skippedCount:0, localSegments:{} };
+const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, skippedCount:0, localSegments:{}, communityEnabled:false, communityApiBase:'', communityAutoSkipTrusted:true };
 let state = { ...DEFAULTS };
 
 const $ = (selector) => document.querySelector(selector);
@@ -66,11 +66,42 @@ async function importData(file) {
   } catch { toast('无法导入：文件格式不正确'); }
 }
 
-function syncSettings() { ['enabled','skipLabeledAds','skipLocalSegments','showToast','debug'].forEach((key)=>{ $(`#${key}`).checked=Boolean(state[key]); }); }
+function syncSettings() {
+  ['enabled','skipLabeledAds','skipLocalSegments','showToast','debug','communityEnabled','communityAutoSkipTrusted'].forEach((key)=>{ $(`#${key}`).checked=Boolean(state[key]); });
+  $('#communityApiBase').value = state.communityApiBase || '';
+  renderCommunityStatus();
+}
+
+async function communityOriginPattern() {
+  try { const url=new URL($('#communityApiBase').value.trim()); return url.protocol==='https:' ? `${url.origin}/*` : ''; } catch { return ''; }
+}
+
+async function renderCommunityStatus() {
+  const status=$('#communityStatus');
+  if(!state.communityApiBase){status.textContent='未连接';return}
+  let pattern;
+  try { pattern=`${new URL(state.communityApiBase).origin}/*`; } catch { status.textContent='地址无效'; return; }
+  const granted=await chrome.permissions.contains({origins:[pattern]});
+  status.textContent=granted&&state.communityEnabled?'已启用':granted?'已授权':'权限缺失';
+}
 
 document.querySelectorAll('nav button[data-page]').forEach((button)=>button.addEventListener('click',()=>showPage(button.dataset.page)));
 document.querySelectorAll('[data-goto]').forEach((button)=>button.addEventListener('click',()=>showPage(button.dataset.goto)));
-['enabled','skipLabeledAds','skipLocalSegments','showToast','debug'].forEach((key)=>$(`#${key}`).addEventListener('change',(event)=>{state[key]=event.target.checked;chrome.storage.local.set({[key]:state[key]});toast('设置已保存')}));
+['enabled','skipLabeledAds','skipLocalSegments','showToast','debug','communityAutoSkipTrusted'].forEach((key)=>$(`#${key}`).addEventListener('change',(event)=>{state[key]=event.target.checked;chrome.storage.local.set({[key]:state[key]});toast('设置已保存')}));
+$('#communityEnabled').addEventListener('change',async(event)=>{
+  if(event.target.checked&&!state.communityApiBase){event.target.checked=false;toast('请先授权并连接 API');return}
+  state.communityEnabled=event.target.checked;await chrome.storage.local.set({communityEnabled:state.communityEnabled});renderCommunityStatus();toast('社区查询设置已保存');
+});
+$('#connectCommunity').addEventListener('click',async()=>{
+  const pattern=await communityOriginPattern();if(!pattern){toast('请输入有效的 HTTPS API 地址');return}
+  const granted=await chrome.permissions.request({origins:[pattern]});if(!granted){toast('未授予域名访问权限');return}
+  const communityApiBase=new URL($('#communityApiBase').value.trim()).origin;state.communityApiBase=communityApiBase;state.communityEnabled=true;
+  await chrome.storage.local.set({communityApiBase,communityEnabled:true});syncSettings();toast('社区 API 已连接');
+});
+$('#disconnectCommunity').addEventListener('click',async()=>{
+  if(state.communityApiBase){const pattern=`${new URL(state.communityApiBase).origin}/*`;await chrome.permissions.remove({origins:[pattern]})}
+  state.communityApiBase='';state.communityEnabled=false;await chrome.storage.local.set({communityApiBase:'',communityEnabled:false});syncSettings();toast('已断开社区 API');
+});
 $('#segmentSearch').addEventListener('input',renderSegments);
 $('#segmentList').addEventListener('click',(event)=>{const button=event.target.closest('.delete-button');if(button)deleteSegment(button.dataset.videoId,Number(button.dataset.index))});
 $('#exportData').addEventListener('click',exportData);

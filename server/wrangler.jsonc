@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "douyin-ad-skipper-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-05",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "douyin-ad-skipper"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

@@ -5,6 +5,10 @@
     enabled: true,
     skipLabeledAds: true,
     skipLocalSegments: true,
+    communityEnabled: false,
+    communityApiBase: '',
+    communityAutoSkipTrusted: true,
+    communityClientId: '',
     showToast: true,
     debug: false,
     skippedCount: 0,
@@ -21,6 +25,8 @@
   let draftVideoId = null;
   let lastSegmentSkipKey = '';
   let mountScheduled = false;
+  const communityCache = new Map();
+  const COMMUNITY_CACHE_MS = 10 * 60 * 1000;
 
   const log = (...args) => settings.debug && console.debug('[抖音广告跳过]', ...args);
 
@@ -109,6 +115,52 @@
     return id ? (settings.localSegments?.[id] || []) : [];
   }
 
+  function communitySegments(video) {
+    const id = extractVideoId(video);
+    const cached = id && communityCache.get(id);
+    return cached?.segments || [];
+  }
+
+  function normalizedApiBase() {
+    try {
+      const url = new URL(settings.communityApiBase || '');
+      return url.protocol === 'https:' ? url.origin : '';
+    } catch {
+      return '';
+    }
+  }
+
+  async function loadCommunitySegments(video) {
+    if (!settings.communityEnabled) return;
+    const videoId = extractVideoId(video);
+    const apiBase = normalizedApiBase();
+    if (!videoId || !apiBase) return;
+    const cached = communityCache.get(videoId);
+    if (cached && Date.now() - cached.loadedAt < COMMUNITY_CACHE_MS) return;
+    communityCache.set(videoId, { loadedAt: Date.now(), segments: cached?.segments || [], loading: true });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      const response = await fetch(`${apiBase}/v1/videos/${videoId}/segments`, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const segments = Array.isArray(payload.segments) ? payload.segments
+        .filter((item) => item.category === 'sponsor' && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+        .map((item) => ({ start: item.start, end: item.end, source: 'community', id: item.id, status: item.status })) : [];
+      communityCache.set(videoId, { loadedAt: Date.now(), segments });
+      renderPreviewBar();
+      log('已加载社区片段', videoId, segments.length);
+    } catch (error) {
+      communityCache.set(videoId, { loadedAt: Date.now(), segments: cached?.segments || [] });
+      log('社区片段查询失败，继续使用本地数据', error);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   function getVideoMetadata(video, videoId) {
     let container = video;
     for (let depth = 0; container && depth < 14; depth += 1, container = container.parentElement) {
@@ -182,6 +234,8 @@
     start: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.8A1.8 1.8 0 0 1 7.7 3.2l10.7 7.1a2 2 0 0 1 0 3.4L7.7 20.8A1.8 1.8 0 0 1 5 19.2V4.8Z"/><path class="das-accent" d="M5 8h3M5 16h3"/></svg>',
     end: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.8A1.8 1.8 0 0 1 7.7 3.2l10.7 7.1a2 2 0 0 1 0 3.4L7.7 20.8A1.8 1.8 0 0 1 5 19.2V4.8Z"/><path class="das-accent" d="M18.5 5v14"/></svg>',
     cancel: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20 6v5.7c0 5-3.3 8.2-8 9.8-4.7-1.6-8-4.8-8-9.8V6l8-3.5Z"/><path class="das-cut" d="m8.5 8.5 7 7m0-7-7 7"/></svg>',
+    submit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20 6v5.7c0 5-3.3 8.2-8 9.8-4.7-1.6-8-4.8-8-9.8V6l8-3.5Z"/><path class="das-cut das-light-cut" d="M12 16V8m-3 3 3-3 3 3"/></svg>',
+    delete: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20 6v5.7c0 5-3.3 8.2-8 9.8-4.7-1.6-8-4.8-8-9.8V6l8-3.5Z"/><path class="das-cut" d="m8.5 8.5 7 7m0-7-7 7"/></svg>',
   };
 
   function controlButton(action, label) {
@@ -191,8 +245,10 @@
   function renderPlayerControls() {
     document.querySelectorAll('.das-player-controls').forEach((controls) => {
       controls.classList.toggle('das-is-creating', draftStart !== null);
+      const video = getActiveVideo();
+      const hasPending = video && currentSegments(video).some((segment) => (segment.submissionStatus || 'pending') === 'pending');
       controls.innerHTML = draftStart === null
-        ? controlButton('start', '片段从当前开始')
+        ? `${hasPending ? controlButton('submit', '打开提交菜单') + controlButton('delete', '删除最后一个未提交片段') : ''}${controlButton('start', '片段从当前开始')}`
         : `${controlButton('cancel', '取消创建片段')}${controlButton('end', '片段现在结束')}`;
     });
   }
@@ -200,6 +256,7 @@
   function ensurePlayerControls() {
     const video = getActiveVideo();
     if (!video) return null;
+    loadCommunitySegments(video);
     if (draftStart !== null && draftVideoId !== extractVideoId(video)) cancelDraft();
     let player = video.parentElement;
     while (player && !player.querySelector?.('xg-right-grid')) player = player.parentElement;
@@ -223,6 +280,7 @@
       renderPlayerControls();
       log('标记按钮已嵌入播放器控制栏');
     }
+    ensurePreviewBar(video, player);
     return controls;
   }
 
@@ -265,16 +323,22 @@
       }
       const savedStart = draftStart;
       const metadata = getVideoMetadata(video, videoId);
-      const segments = [...currentSegments(video), { start: savedStart, end, createdAt: Date.now(), ...metadata }]
+      const segments = [...currentSegments(video), { start: savedStart, end, createdAt: Date.now(), submissionStatus: 'pending', ...metadata }]
         .sort((a, b) => a.start - b.start);
       const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
       settings.localSegments = localSegments;
       await chrome.storage.local.set({ localSegments });
       cancelDraft();
-      showToast(`片段已保存 · ${formatTime(savedStart)}–${formatTime(end)}`);
+      renderPlayerControls();
+      renderPreviewBar();
+      showToast(`片段已保存，点击上传图标提交 · ${formatTime(savedStart)}–${formatTime(end)}`);
     } else if (action === 'cancel') {
       cancelDraft();
       showToast('已取消创建片段');
+    } else if (action === 'delete') {
+      await deleteLastPendingSegment(video, videoId);
+    } else if (action === 'submit') {
+      openSubmissionMenu(video, videoId);
     }
   }
 
@@ -282,6 +346,140 @@
     draftStart = null;
     draftVideoId = null;
     renderPlayerControls();
+    renderPreviewBar();
+  }
+
+  async function deleteLastPendingSegment(video, videoId) {
+    const segments = [...currentSegments(video)];
+    const index = segments.map((item) => item.submissionStatus || 'pending').lastIndexOf('pending');
+    if (index < 0) return;
+    const [removed] = segments.splice(index, 1);
+    const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
+    settings.localSegments = localSegments;
+    await chrome.storage.local.set({ localSegments });
+    closeSubmissionMenu();
+    renderPlayerControls();
+    renderPreviewBar();
+    showToast(`已删除未提交片段 · ${formatTime(removed.start)}–${formatTime(removed.end)}`);
+  }
+
+  function closeSubmissionMenu() {
+    document.querySelectorAll('.das-submission-menu').forEach((menu) => menu.remove());
+  }
+
+  function openSubmissionMenu(video, videoId) {
+    const player = getVideoPlayer(video);
+    if (!player) return;
+    const existing = player.querySelector('.das-submission-menu');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    closeSubmissionMenu();
+    const pending = currentSegments(video).filter((segment) => (segment.submissionStatus || 'pending') === 'pending');
+    if (!pending.length) return;
+    const menu = document.createElement('section');
+    menu.className = 'das-submission-menu';
+    menu.innerHTML = `<header><strong>提交广告片段</strong><button type="button" data-menu-action="close" aria-label="关闭">×</button></header>
+      <p>以下片段会作为“赞助/广告”提交；审核通过后，其他用户也能自动跳过。</p>
+      <ol>${pending.map((item) => `<li><span>${formatTime(item.start)} – ${formatTime(item.end)}</span><em>${(item.end - item.start).toFixed(1)} 秒</em></li>`).join('')}</ol>
+      <div class="das-submission-actions"><button type="button" data-menu-action="submit">提交到社区</button><button type="button" data-menu-action="keep">暂时保留本地</button></div>`;
+    menu.addEventListener('pointerdown', (event) => event.stopPropagation());
+    menu.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const action = event.target.closest('button')?.dataset.menuAction;
+      if (action === 'close' || action === 'keep') closeSubmissionMenu();
+      if (action === 'submit') await submitPendingSegments(video, videoId, menu);
+    });
+    player.appendChild(menu);
+  }
+
+  async function submitPendingSegments(video, videoId, menu) {
+    const apiBase = normalizedApiBase();
+    if (!settings.communityEnabled || !apiBase) {
+      showToast('请先在扩展选项中启用并配置社区服务');
+      chrome.runtime.openOptionsPage?.();
+      return;
+    }
+    const button = menu.querySelector('[data-menu-action="submit"]');
+    button.disabled = true;
+    button.textContent = '提交中…';
+    const segments = [...currentSegments(video)];
+    let submitted = 0;
+    for (const segment of segments) {
+      if ((segment.submissionStatus || 'pending') !== 'pending') continue;
+      try {
+        const response = await fetch(`${apiBase}/v1/segments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Client-ID': settings.communityClientId },
+          body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: 'sponsor', clientRequestId: crypto.randomUUID() }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        segment.submissionStatus = 'submitted';
+        segment.communityId = payload.segment?.id || payload.id || '';
+        submitted += 1;
+      } catch (error) {
+        log('社区片段提交失败', error);
+      }
+    }
+    const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
+    settings.localSegments = localSegments;
+    await chrome.storage.local.set({ localSegments });
+    closeSubmissionMenu();
+    renderPlayerControls();
+    renderPreviewBar();
+    showToast(submitted ? `已提交 ${submitted} 个片段` : '提交失败，片段仍保留在本地');
+  }
+
+  function getVideoPlayer(video) {
+    let player = video?.parentElement;
+    while (player && !player.querySelector?.('xg-right-grid')) player = player.parentElement;
+    return player;
+  }
+
+  function getProgressHost(player) {
+    const selectors = ['xg-progress', '.xgplayer-progress', 'xg-progress-outer', '.xgplayer-progress-outer'];
+    for (const selector of selectors) {
+      const host = player?.querySelector(selector);
+      if (host) return host;
+    }
+    return null;
+  }
+
+  function ensurePreviewBar(video, player = getVideoPlayer(video)) {
+    const host = getProgressHost(player);
+    if (!host) return null;
+    let bar = host.querySelector(':scope > .das-preview-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'das-preview-bar';
+      host.appendChild(bar);
+    }
+    renderPreviewBar(video, bar);
+    return bar;
+  }
+
+  function renderPreviewBar(video = getActiveVideo(), bar) {
+    if (!video) return;
+    const player = getVideoPlayer(video);
+    bar ||= player?.querySelector('.das-preview-bar');
+    if (!bar || !Number.isFinite(video.duration) || video.duration <= 0) return;
+    const items = [
+      ...communitySegments(video).map((item) => ({ ...item, previewState: item.status === 'trusted' ? 'submitted' : 'candidate' })),
+      ...currentSegments(video).map((item) => ({ ...item, previewState: item.submissionStatus || 'pending' })),
+    ];
+    if (draftStart !== null && draftVideoId === extractVideoId(video)) {
+      items.push({ start: Math.min(draftStart, video.currentTime), end: Math.max(draftStart, video.currentTime), previewState: 'pending' });
+    }
+    items.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+    bar.replaceChildren(...items.map((item) => {
+      const segment = document.createElement('span');
+      segment.className = `das-preview-segment das-${item.previewState}`;
+      segment.style.left = `${Math.max(0, item.start / video.duration * 100)}%`;
+      segment.style.width = `${Math.max(0.08, (Math.min(video.duration, item.end) - Math.max(0, item.start)) / video.duration * 100)}%`;
+      return segment;
+    }));
   }
 
   async function checkLocalSegments() {
@@ -290,8 +488,13 @@
     if (!video || video.paused || video.seeking) return;
     const videoId = extractVideoId(video);
     if (!videoId) return;
+    loadCommunitySegments(video);
     const now = video.currentTime;
-    const segment = currentSegments(video).find(({ start, end }) => now >= start - 0.12 && now < end - 0.05);
+    const available = [
+      ...currentSegments(video),
+      ...(settings.communityAutoSkipTrusted ? communitySegments(video).filter((segment) => segment.status === 'trusted') : []),
+    ];
+    const segment = available.find(({ start, end }) => now >= start - 0.12 && now < end - 0.05);
     if (!segment) return;
     const key = `${videoId}:${segment.start}:${segment.end}`;
     if (lastSegmentSkipKey === key && Math.abs(now - segment.start) > 0.5) return;
@@ -299,7 +502,7 @@
     video.currentTime = Math.min(segment.end, video.duration || segment.end);
     await recordSkip();
     showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}`);
-    log('跳过本地标记片段', videoId, segment);
+    log(segment.source === 'community' ? '跳过社区可信片段' : '跳过本地标记片段', videoId, segment);
   }
 
   function moveToNextVideo() {
@@ -340,6 +543,10 @@
 
   chrome.storage.local.get(DEFAULTS, (stored) => {
     settings = { ...DEFAULTS, ...stored };
+    if (!settings.communityClientId) {
+      settings.communityClientId = crypto.randomUUID();
+      chrome.storage.local.set({ communityClientId: settings.communityClientId });
+    }
     log('扩展已启动', settings);
     checkCurrentVideo();
     ensurePlayerControls();
@@ -348,6 +555,8 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     for (const [key, change] of Object.entries(changes)) settings[key] = change.newValue;
+    renderPlayerControls();
+    renderPreviewBar();
   });
 
   const observer = new MutationObserver(() => {
@@ -365,4 +574,5 @@
   setInterval(checkCurrentVideo, CHECK_INTERVAL_MS);
   setInterval(checkLocalSegments, 250);
   setInterval(schedulePlayerControls, 300);
+  setInterval(renderPreviewBar, 300);
 })();

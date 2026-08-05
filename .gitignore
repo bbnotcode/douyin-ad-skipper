@@ -8,3 +8,4 @@ node_modules/
 server/.env
 server/.dev.vars
 server/node_modules/
+server/.wrangler/
