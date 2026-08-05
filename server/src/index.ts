@@ -71,7 +71,7 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
   const identity = await identityHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  if (!await withinRateLimit(env, identity, 'submit', 10)) return json({ error: 'rate_limited' }, 429);
+  if (!await withinRateLimit(env, identity, 'submit', 20)) return json({ error: 'rate_limited' }, 429);
   const input = parseSegmentInput(await bodyJson(request));
   if (!input) return json({ error: 'invalid_segment' }, 400);
   const startMs = Math.round(input.start * 1000), endMs = Math.round(input.end * 1000);
@@ -84,9 +84,9 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
   const id = crypto.randomUUID(), now = new Date().toISOString();
   await env.DB.prepare(`
     INSERT INTO segments (id, video_id, start_ms, end_ms, duration_ms, category, status, submitter_hash, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'candidate', ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, 'trusted', ?, ?, ?)
   `).bind(id, input.videoId, startMs, endMs, input.duration == null ? null : Math.round(input.duration * 1000), input.category, identity, now, now).run();
-  return json({ segment: { id, videoId: input.videoId, start: input.start, end: input.end, category: input.category, status: 'candidate', upvotes: 0, downvotes: 0, score: 0, createdAt: now } }, 201);
+  return json({ segment: { id, videoId: input.videoId, start: input.start, end: input.end, category: input.category, status: 'trusted', upvotes: 0, downvotes: 0, score: 0, createdAt: now } }, 201);
 }
 
 async function vote(request: Request, env: Env, segmentId: string): Promise<Response> {

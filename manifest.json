@@ -10,7 +10,10 @@
     "128": "icons/icon-128.png"
   },
   "permissions": ["storage"],
-  "host_permissions": ["https://www.douyin.com/*"],
+  "host_permissions": [
+    "https://www.douyin.com/*",
+    "https://douyin-ad-skipper-api.douyin-skip-community.workers.dev/*"
+  ],
   "optional_host_permissions": ["https://*/*"],
   "action": {
     "default_title": "抖音广告自动跳过",

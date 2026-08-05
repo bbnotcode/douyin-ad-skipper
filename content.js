@@ -1,12 +1,13 @@
 (() => {
   'use strict';
 
+  const DEFAULT_COMMUNITY_API = 'https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
   const DEFAULTS = {
     enabled: true,
     skipLabeledAds: true,
     skipLocalSegments: true,
-    communityEnabled: false,
-    communityApiBase: '',
+    communityEnabled: true,
+    communityApiBase: DEFAULT_COMMUNITY_API,
     communityAutoSkipTrusted: true,
     communityClientId: '',
     showToast: true,
@@ -543,6 +544,11 @@
 
   chrome.storage.local.get(DEFAULTS, (stored) => {
     settings = { ...DEFAULTS, ...stored };
+    if (/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
+      settings.communityApiBase = DEFAULT_COMMUNITY_API;
+      settings.communityEnabled = true;
+      chrome.storage.local.set({ communityApiBase: DEFAULT_COMMUNITY_API, communityEnabled: true });
+    }
     if (!settings.communityClientId) {
       settings.communityClientId = crypto.randomUUID();
       chrome.storage.local.set({ communityClientId: settings.communityClientId });

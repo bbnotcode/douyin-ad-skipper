@@ -38,8 +38,8 @@
       </section>
 
       <section class="page" data-page="segments">
-        <div class="page-head"><div><p class="eyebrow">LOCAL LIBRARY</p><h1>片段管理</h1><p>查看、打开或删除你手动创建的片段。</p></div></div>
-        <div class="toolbar"><label class="search"><span>⌕</span><input id="segmentSearch" placeholder="搜索视频标题、作者或作品 ID"></label><span id="segmentSummary"></span></div>
+        <div class="page-head"><div><p class="eyebrow">LOCAL LIBRARY</p><h1>片段管理</h1><p>查看、上传或删除你手动创建的片段。</p></div></div>
+        <div class="toolbar"><label class="search"><span>⌕</span><input id="segmentSearch" placeholder="搜索视频标题、作者或作品 ID"></label><div class="toolbar-actions"><span id="segmentSummary"></span><button id="uploadAllSegments" class="upload-all-button">上传全部待提交</button></div></div>
         <div id="segmentList" class="segment-list"></div>
       </section>
 
@@ -62,17 +62,17 @@
       </section>
 
       <section class="page" data-page="community">
-        <div class="page-head"><div><p class="eyebrow">COMMUNITY BETA</p><h1>社区共享</h1><p>从社区 API 获取经过确认的广告片段。功能默认关闭。</p></div><span id="communityStatus" class="status-dot">未连接</span></div>
+        <div class="page-head"><div><p class="eyebrow">COMMUNITY BETA</p><h1>社区共享</h1><p>默认连接项目公共 API；提交成功的广告片段会立即与其他用户共享。</p></div><span id="communityStatus" class="status-dot">未连接</span></div>
         <div class="settings-card">
           <div class="community-connect">
             <div><strong>社区 API 地址</strong><p>必须是 HTTPS 地址。连接时 Chrome 会询问该域名的访问权限。</p></div>
             <div class="community-input"><input id="communityApiBase" type="url" placeholder="https://your-worker.workers.dev"><button id="connectCommunity">授权并连接</button></div>
           </div>
           <label class="setting-row"><div><strong>启用社区查询</strong><p>只发送当前作品 ID，不上传完整观看历史</p></div><input id="communityEnabled" type="checkbox"><i></i></label>
-          <label class="setting-row"><div><strong>自动跳过可信片段</strong><p>只使用状态为 trusted 的赞助片段，候选片段不会自动跳过</p></div><input id="communityAutoSkipTrusted" type="checkbox"><i></i></label>
+          <label class="setting-row"><div><strong>自动跳过社区片段</strong><p>错误片段收到社区反对或举报后会停止下发</p></div><input id="communityAutoSkipTrusted" type="checkbox"><i></i></label>
         </div>
         <div class="community-actions"><button id="disconnectCommunity" class="secondary-button">断开并移除域名权限</button></div>
-        <div class="info-card"><span>隐私设计</span><p>远程查询失败时会立即回退到本地数据。当前扩展不会自动上传你创建的片段；提交与投票客户端将在防滥用机制通过评审后另行实现。</p></div>
+        <div class="info-card"><span>隐私设计</span><p>远程查询失败时会立即回退到本地数据。扩展不会自动上传你创建的片段，只有点击播放器提交按钮或片段管理中的上传按钮时才会发送。</p></div>
       </section>
 
       <section class="page" data-page="data">
@@ -86,7 +86,7 @@
 
       <section class="page" data-page="about">
         <div class="page-head"><div><p class="eyebrow">ABOUT</p><h1>关于抖音广告跳过</h1><p>一个完全本地运行的 Chrome 实验扩展。</p></div></div>
-        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p>版本 0.5.0</p><p>支持本地片段和可选的社区可信片段查询。社区功能默认关闭，当前不会自动上传本地片段。</p></div></div>
+        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p>版本 0.5.0</p><p>支持本地片段和社区共享。社区查询默认启用，本地片段仍只会在你主动点击提交时上传。</p></div></div>
       </section>
     </main>
   </div>
