@@ -31,12 +31,32 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function identityHash(request: Request, env: Env, requireClient = true): Promise<string | null> {
+function clientIdFrom(request: Request): string {
+  return request.headers.get('X-Client-ID') || '';
+}
+
+async function contributorHash(request: Request, env: Env): Promise<string | null> {
   if (!env.CLIENT_HASH_SALT) return null;
-  const clientId = request.headers.get('X-Client-ID') || '';
-  if (requireClient && !/^[0-9a-f-]{16,64}$/i.test(clientId)) return '';
+  const clientId = clientIdFrom(request);
+  if (!/^[0-9a-f-]{16,64}$/i.test(clientId)) return '';
+  return sha256(`${env.CLIENT_HASH_SALT}:contributor:${clientId}`);
+}
+
+async function rateIdentityHash(request: Request, env: Env): Promise<string | null> {
+  const contributor = await contributorHash(request, env);
+  if (!contributor) return contributor;
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
-  return sha256(`${env.CLIENT_HASH_SALT}:${clientId}:${ip}`);
+  return sha256(`${env.CLIENT_HASH_SALT}:rate:${contributor}:${ip}`);
+}
+
+async function migrateLegacyIdentity(request: Request, env: Env, stableHash: string): Promise<void> {
+  const clientId = clientIdFrom(request);
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  const legacyHash = await sha256(`${env.CLIENT_HASH_SALT}:${clientId}:${ip}`);
+  if (legacyHash !== stableHash) {
+    await env.DB.prepare('UPDATE segments SET submitter_hash = ? WHERE submitter_hash = ?')
+      .bind(stableHash, legacyHash).run();
+  }
 }
 
 async function withinRateLimit(env: Env, identity: string, action: string, limit: number): Promise<boolean> {
@@ -67,11 +87,30 @@ async function getSegments(videoId: string, env: Env): Promise<Response> {
   return json({ videoId, segments: result.results.map(segmentJson) }, 200, { 'Cache-Control': 'public, max-age=60' });
 }
 
-async function submitSegment(request: Request, env: Env): Promise<Response> {
-  const identity = await identityHash(request, env);
+async function getMySegments(request: Request, env: Env): Promise<Response> {
+  const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  if (!await withinRateLimit(env, identity, 'submit', 20)) return json({ error: 'rate_limited' }, 429);
+  await migrateLegacyIdentity(request, env, identity);
+  const result = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    FROM segments WHERE submitter_hash = ? AND status != 'rejected'
+    ORDER BY created_at DESC LIMIT 500
+  `).bind(identity).all<SegmentRow>();
+  const contributedMs = result.results.reduce((sum, row) => sum + Math.max(0, row.end_ms - row.start_ms), 0);
+  return json({
+    segments: result.results.map(segmentJson),
+    stats: { submittedCount: result.results.length, contributedSeconds: contributedMs / 1000 },
+  });
+}
+
+async function submitSegment(request: Request, env: Env): Promise<Response> {
+  const identity = await contributorHash(request, env);
+  if (identity === null) return json({ error: 'writes_not_configured' }, 503);
+  if (!identity) return json({ error: 'invalid_client_id' }, 400);
+  const rateIdentity = await rateIdentityHash(request, env);
+  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'submit', 20)) return json({ error: 'rate_limited' }, 429);
+  await migrateLegacyIdentity(request, env, identity);
   const input = parseSegmentInput(await bodyJson(request));
   if (!input) return json({ error: 'invalid_segment' }, 400);
   const startMs = Math.round(input.start * 1000), endMs = Math.round(input.end * 1000);
@@ -90,10 +129,11 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
 }
 
 async function vote(request: Request, env: Env, segmentId: string): Promise<Response> {
-  const identity = await identityHash(request, env);
+  const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  if (!await withinRateLimit(env, identity, 'vote', 60)) return json({ error: 'rate_limited' }, 429);
+  const rateIdentity = await rateIdentityHash(request, env);
+  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'vote', 60)) return json({ error: 'rate_limited' }, 429);
   const body = await bodyJson(request) as { vote?: unknown } | null;
   const value = Number(body?.vote);
   if (value !== 1 && value !== -1) return json({ error: 'invalid_vote' }, 400);
@@ -115,10 +155,11 @@ async function vote(request: Request, env: Env, segmentId: string): Promise<Resp
 }
 
 async function report(request: Request, env: Env, segmentId: string): Promise<Response> {
-  const identity = await identityHash(request, env);
+  const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  if (!await withinRateLimit(env, identity, 'report', 10)) return json({ error: 'rate_limited' }, 429);
+  const rateIdentity = await rateIdentityHash(request, env);
+  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'report', 10)) return json({ error: 'rate_limited' }, 429);
   const body = await bodyJson(request) as { reason?: unknown } | null;
   const reason = String(body?.reason || '');
   if (!REPORT_REASONS.has(reason)) return json({ error: 'invalid_reason' }, 400);
@@ -140,6 +181,7 @@ export default {
       if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 1 });
       const videoMatch = path.match(/^\/v1\/videos\/(\d+)\/segments$/);
       if (request.method === 'GET' && videoMatch) return getSegments(videoMatch[1], env);
+      if (request.method === 'GET' && path === '/v1/me/segments') return getMySegments(request, env);
       if (request.method === 'POST' && path === '/v1/segments') return submitSegment(request, env);
       const voteMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/votes$/i);
       if (request.method === 'POST' && voteMatch) return vote(request, env, voteMatch[1]);

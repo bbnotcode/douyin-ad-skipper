@@ -406,6 +406,7 @@
     button.disabled = true;
     button.textContent = '提交中…';
     const segments = [...currentSegments(video)];
+    const submittedSegments = new Set();
     let submitted = 0;
     for (const segment of segments) {
       if ((segment.submissionStatus || 'pending') !== 'pending') continue;
@@ -416,17 +417,20 @@
           body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: 'sponsor', clientRequestId: crypto.randomUUID() }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
-        segment.submissionStatus = 'submitted';
-        segment.communityId = payload.segment?.id || payload.id || '';
+        await response.json();
+        submittedSegments.add(segment);
         submitted += 1;
       } catch (error) {
         log('社区片段提交失败', error);
       }
     }
-    const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
+    const localSegments = { ...(settings.localSegments || {}) };
+    const remaining = segments.filter((segment) => !submittedSegments.has(segment));
+    if (remaining.length) localSegments[videoId] = remaining;
+    else delete localSegments[videoId];
     settings.localSegments = localSegments;
     await chrome.storage.local.set({ localSegments });
+    if (submitted) communityCache.delete(videoId);
     closeSubmissionMenu();
     renderPlayerControls();
     renderPreviewBar();
@@ -542,21 +546,29 @@
     log('命中广告标识', signal.type, signal.text, signal.element);
   }
 
-  chrome.storage.local.get(DEFAULTS, (stored) => {
+  async function getContributorId() {
+    const synced = await chrome.storage.sync.get({ communityContributorId: '' });
+    if (/^[0-9a-f-]{16,64}$/i.test(synced.communityContributorId)) return synced.communityContributorId;
+    const legacy = await chrome.storage.local.get({ communityClientId: '' });
+    const id = /^[0-9a-f-]{16,64}$/i.test(legacy.communityClientId) ? legacy.communityClientId : crypto.randomUUID();
+    await chrome.storage.sync.set({ communityContributorId: id });
+    await chrome.storage.local.remove('communityClientId');
+    return id;
+  }
+
+  (async () => {
+    const stored = await chrome.storage.local.get(DEFAULTS);
     settings = { ...DEFAULTS, ...stored };
     if (/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
       settings.communityApiBase = DEFAULT_COMMUNITY_API;
       settings.communityEnabled = true;
-      chrome.storage.local.set({ communityApiBase: DEFAULT_COMMUNITY_API, communityEnabled: true });
+      await chrome.storage.local.set({ communityApiBase: DEFAULT_COMMUNITY_API, communityEnabled: true });
     }
-    if (!settings.communityClientId) {
-      settings.communityClientId = crypto.randomUUID();
-      chrome.storage.local.set({ communityClientId: settings.communityClientId });
-    }
+    settings.communityClientId = await getContributorId();
     log('扩展已启动', settings);
     checkCurrentVideo();
     ensurePlayerControls();
-  });
+  })();
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;

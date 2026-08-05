@@ -1,6 +1,6 @@
 # 社区共享 API 草案
 
-本文档用于讨论，不代表已部署服务。
+本文档描述当前公共服务接口。
 
 ## 查询片段
 
@@ -45,6 +45,15 @@ Content-Type: application/json
 ```
 
 服务端必须校验数值范围、片段长度、视频时长、重复请求和提交速率。
+
+## 我的社区片段
+
+```http
+GET /v1/me/segments
+X-Client-ID: 匿名贡献者 UUID
+```
+
+返回该匿名贡献者已提交的片段，以及 `submittedCount` 和 `contributedSeconds`。服务端只使用 `X-Client-ID` 的加盐哈希查询，不保存原始值。
 
 ## 投票
 

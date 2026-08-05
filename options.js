@@ -1,6 +1,8 @@
 const DEFAULT_COMMUNITY_API='https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
 const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, communityAutoSkipTrusted:true, communityClientId:'' };
 let state = { ...DEFAULTS };
+let communitySegments = [];
+let communityStats = { submittedCount:0, contributedSeconds:0 };
 
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
@@ -11,12 +13,13 @@ const formatContribution = (seconds=0) => {
   const hours=Math.floor(rounded/3600),minutes=Math.round((rounded%3600)/60);
   return hours ? `${hours} 小时${minutes?` ${minutes} 分钟`:''}` : `${minutes} 分钟`;
 };
-const allSegments = () => Object.entries(state.localSegments || {}).flatMap(([videoId,segments]) => segments.map((segment,index) => ({...segment,videoId,index})));
+const localSegmentItems = () => Object.entries(state.localSegments || {}).flatMap(([videoId,segments]) => segments.map((segment,index) => ({...segment,videoId,index,storageSource:'local'})));
+const allSegments = () => [...localSegmentItems(), ...communitySegments];
 
 function showPage(name) {
   document.querySelectorAll('[data-page]').forEach((element) => element.classList.toggle('active', element.dataset.page === name));
   history.replaceState(null,'',`#${name}`);
-  if (name === 'segments') renderSegments();
+  if (name === 'segments') { renderSegments(); fetchMyContributions(); }
 }
 
 function toast(message) {
@@ -26,20 +29,18 @@ function toast(message) {
 
 function segmentTitle(segment) { return segment.title || `抖音作品 ${segment.videoId}`; }
 function segmentAuthor(segment) { return segment.author || '未记录作者'; }
-function isPending(segment) { return (segment.submissionStatus || 'pending') === 'pending'; }
-function segmentStatus(segment) { return isPending(segment) ? ['pending','待提交'] : ['submitted','已提交']; }
+function isPending(segment) { return segment.storageSource !== 'community' && (segment.submissionStatus || 'pending') === 'pending'; }
+function segmentStatus(segment) { return isPending(segment) ? ['pending','待提交'] : ['submitted','社区保存']; }
 
 function renderOverview() {
   const segments = allSegments();
   const duration = segments.reduce((sum,item) => sum + Math.max(0,Number(item.end)-Number(item.start)),0);
-  const submittedSegments=segments.filter((item)=>!isPending(item));
-  const contributedDuration=submittedSegments.reduce((sum,item)=>sum+Math.max(0,Number(item.end)-Number(item.start)),0);
   $('#metricSegments').textContent = segments.length;
-  $('#metricVideos').textContent = Object.keys(state.localSegments || {}).filter((id) => state.localSegments[id]?.length).length;
+  $('#metricVideos').textContent = new Set(segments.map((item)=>item.videoId)).size;
   $('#metricSkips').textContent = Number(state.skippedCount || 0).toLocaleString('zh-CN');
   $('#metricDuration').textContent = formatTime(duration);
-  $('#metricContributionDuration').textContent = formatContribution(contributedDuration);
-  $('#metricContributionCount').textContent = `已提交 ${submittedSegments.length} 个片段`;
+  $('#metricContributionDuration').textContent = formatContribution(communityStats.contributedSeconds);
+  $('#metricContributionCount').textContent = `已提交 ${communityStats.submittedCount} 个片段`;
   $('#navSegmentCount').textContent = segments.length;
   const recent = [...segments].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,5);
   $('#recentSegments').innerHTML = recent.length ? recent.map((item) => `<div class="recent-item"><div><strong>${escapeHtml(segmentTitle(item))}</strong><span>${escapeHtml(segmentAuthor(item))} · ${formatTime(item.start)}–${formatTime(item.end)}</span></div><span>${item.createdAt ? new Date(item.createdAt).toLocaleDateString('zh-CN') : '旧版片段'}</span></div>`).join('') : '<div class="empty">还没有创建片段。请在抖音播放器控制栏点击标记图标。</div>';
@@ -47,20 +48,55 @@ function renderOverview() {
 
 function renderSegments() {
   const query = ($('#segmentSearch').value || '').trim().toLowerCase();
-  const groups = Object.entries(state.localSegments || {}).map(([videoId,segments]) => ({videoId,segments})).filter(({videoId,segments}) => {
+  const grouped=new Map();
+  for(const segment of allSegments()){if(!grouped.has(segment.videoId))grouped.set(segment.videoId,[]);grouped.get(segment.videoId).push(segment)}
+  const groups = [...grouped.entries()].map(([videoId,segments]) => ({videoId,segments})).filter(({videoId,segments}) => {
     const haystack = `${videoId} ${segments[0]?.title||''} ${segments[0]?.author||''}`.toLowerCase();
     return segments.length && (!query || haystack.includes(query));
   });
   const count = groups.reduce((sum,group)=>sum+group.segments.length,0);
-  const pendingCount = groups.reduce((sum,group)=>sum+group.segments.filter(isPending).length,0);
+  const pendingCount = localSegmentItems().filter(isPending).length;
   $('#segmentSummary').textContent = `${groups.length} 个视频 · ${count} 个片段`;
   $('#uploadAllSegments').disabled = pendingCount === 0;
   $('#uploadAllSegments').textContent = pendingCount ? `上传全部待提交（${pendingCount}）` : '没有待提交片段';
   $('#segmentList').innerHTML = groups.length ? groups.map(({videoId,segments}) => {
     const info = segments.find((item)=>item.title||item.author||item.url) || {};
     const url = info.url || `https://www.douyin.com/video/${videoId}`;
-    return `<article class="video-group"><header class="video-head"><div><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(info.title||`抖音作品 ${videoId}`)}</strong></a><span>${escapeHtml(info.author||'未记录作者')} · ID ${videoId}</span></div><em>${segments.length} 段</em></header>${segments.map((item,index)=>{const [statusClass,statusText]=segmentStatus(item);return `<div class="segment-row"><span class="time-range">${formatTime(item.start)} → ${formatTime(item.end)}</span><div class="segment-copy"><strong>广告片段 <i class="segment-status ${statusClass}">${statusText}</i></strong><span>${item.createdAt?new Date(item.createdAt).toLocaleString('zh-CN'):'从旧版本保存'}</span></div><div class="segment-actions"><button class="upload-button" data-video-id="${videoId}" data-index="${index}" ${isPending(item)?'':'disabled'}>${isPending(item)?'上传社区':'已上传'}</button><button class="delete-button" data-video-id="${videoId}" data-index="${index}">删除</button></div></div>`}).join('')}</article>`;
-  }).join('') : '<div class="panel empty">没有找到本地片段。</div>';
+    return `<article class="video-group"><header class="video-head"><div><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(info.title||`抖音作品 ${videoId}`)}</strong></a><span>${escapeHtml(info.author||'未记录作者')} · ID ${videoId}</span></div><em>${segments.length} 段</em></header>${segments.map((item)=>{const [statusClass,statusText]=segmentStatus(item);return `<div class="segment-row"><span class="time-range">${formatTime(item.start)} → ${formatTime(item.end)}</span><div class="segment-copy"><strong>广告片段 <i class="segment-status ${statusClass}">${statusText}</i></strong><span>${item.createdAt?new Date(item.createdAt).toLocaleString('zh-CN'):'从旧版本保存'}</span></div><div class="segment-actions">${item.storageSource==='community'?'<button class="upload-button" disabled>云端片段</button>':`<button class="upload-button" data-video-id="${videoId}" data-index="${item.index}">上传社区</button><button class="delete-button" data-video-id="${videoId}" data-index="${item.index}">删除草稿</button>`}</div></div>`}).join('')}</article>`;
+  }).join('') : '<div class="panel empty">没有找到片段。</div>';
+}
+
+async function getContributorId() {
+  const synced=await chrome.storage.sync.get({communityContributorId:''});
+  if(/^[0-9a-f-]{16,64}$/i.test(synced.communityContributorId))return synced.communityContributorId;
+  const legacy=await chrome.storage.local.get({communityClientId:''});
+  const id=/^[0-9a-f-]{16,64}$/i.test(legacy.communityClientId)?legacy.communityClientId:crypto.randomUUID();
+  await chrome.storage.sync.set({communityContributorId:id});
+  await chrome.storage.local.remove('communityClientId');
+  return id;
+}
+
+async function fetchMyContributions() {
+  if(!state.communityEnabled||!state.communityApiBase||!state.communityClientId)return;
+  try{
+    const response=await fetch(`${new URL(state.communityApiBase).origin}/v1/me/segments`,{headers:{Accept:'application/json','X-Client-ID':state.communityClientId}});
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    const payload=await response.json();
+    communitySegments=Array.isArray(payload.segments)?payload.segments.map((segment)=>({...segment,storageSource:'community',submissionStatus:'submitted'})):[];
+    communityStats={submittedCount:Number(payload.stats?.submittedCount||0),contributedSeconds:Number(payload.stats?.contributedSeconds||0)};
+    const remoteIds=new Set(communitySegments.map((item)=>item.id));
+    const remoteTimes=new Set(communitySegments.map((item)=>`${item.videoId}:${Number(item.start).toFixed(3)}:${Number(item.end).toFixed(3)}`));
+    let changed=false;const localSegments={};
+    for(const [videoId,segments] of Object.entries(state.localSegments||{})){
+      const kept=segments.filter((item)=>{
+        const uploaded=(item.submissionStatus==='submitted')&&(remoteIds.has(item.communityId)||remoteTimes.has(`${videoId}:${Number(item.start).toFixed(3)}:${Number(item.end).toFixed(3)}`));
+        if(uploaded)changed=true;return !uploaded;
+      });
+      if(kept.length)localSegments[videoId]=kept;
+    }
+    if(changed){state.localSegments=localSegments;await chrome.storage.local.set({localSegments})}
+    renderOverview();renderSegments();
+  }catch(error){console.error('[抖音广告跳过] 获取我的社区片段失败',error)}
 }
 
 async function deleteSegment(videoId,index) {
@@ -98,10 +134,11 @@ async function uploadSegment(videoId,index) {
       body:JSON.stringify({videoId,start:Number(segment.start),end:Number(segment.end),category:'sponsor',clientRequestId:crypto.randomUUID()}),
     });
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload=await response.json();
-    segment.submissionStatus='submitted';
-    segment.communityId=payload.segment?.id||payload.id||'';
-    await chrome.storage.local.set({localSegments:state.localSegments});
+    await response.json();
+    const localSegments={...state.localSegments};const segments=[...(localSegments[videoId]||[])];segments.splice(index,1);
+    if(segments.length)localSegments[videoId]=segments;else delete localSegments[videoId];
+    state.localSegments=localSegments;await chrome.storage.local.set({localSegments});
+    await fetchMyContributions();
     return true;
   } catch(error) {
     console.error('[抖音广告跳过] 上传社区失败',error);
@@ -112,7 +149,7 @@ async function uploadSegment(videoId,index) {
 async function uploadAllPending() {
   if (!await ensureCommunityReady()) return;
   const button=$('#uploadAllSegments');
-  const pending=allSegments().filter(isPending);
+  const pending=localSegmentItems().filter(isPending).sort((a,b)=>a.videoId===b.videoId?b.index-a.index:0);
   if(!pending.length)return;
   button.disabled=true;
   let success=0;
@@ -184,5 +221,5 @@ $('#importData').addEventListener('click',()=>$('#importFile').click());
 $('#importFile').addEventListener('change',(event)=>{if(event.target.files[0])importData(event.target.files[0]);event.target.value=''});
 $('#clearSegments').addEventListener('click',async()=>{if(confirm('确定清空所有本地片段吗？此操作无法撤销。')){state.localSegments={};await chrome.storage.local.set({localSegments:{}});renderOverview();renderSegments();toast('本地片段已清空')}});
 
-chrome.storage.local.get(DEFAULTS,(stored)=>{state={...DEFAULTS,...stored};if(/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}if(!state.communityClientId){state.communityClientId=crypto.randomUUID();chrome.storage.local.set({communityClientId:state.communityClientId})}syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview')});
+(async()=>{const stored=await chrome.storage.local.get(DEFAULTS);state={...DEFAULTS,...stored};if(/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}state.communityClientId=await getContributorId();syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');await fetchMyContributions()})();
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;for(const [key,change] of Object.entries(changes))state[key]=change.newValue;renderOverview()});
