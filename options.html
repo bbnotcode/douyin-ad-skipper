@@ -71,9 +71,10 @@
         <div class="page-head"><div><p class="eyebrow">KEYBOARD</p><h1>快捷键</h1><p>无需移动鼠标即可创建、取消或提交片段。</p></div></div>
         <div class="settings-card">
           <label class="setting-row"><div><strong>启用播放器快捷键</strong><p>在输入框和可编辑区域中不会触发</p></div><input id="shortcutsEnabled" type="checkbox"><i></i></label>
-          <div class="shortcut-row"><div><strong>开始 / 结束片段</strong><p>第一次开始，第二次结束</p></div><kbd>Alt</kbd><span>+</span><kbd>Z</kbd></div>
-          <div class="shortcut-row"><div><strong>取消创建</strong><p>仅在正在创建片段时生效</p></div><kbd>Alt</kbd><span>+</span><kbd>X</kbd></div>
-          <div class="shortcut-row"><div><strong>打开提交菜单</strong><p>存在待提交草稿时生效</p></div><kbd>Alt</kbd><span>+</span><kbd>Enter</kbd></div>
+          <div class="shortcut-row"><div><strong>开始 / 结束片段</strong><p>第一次开始，第二次结束</p></div><button class="shortcut-capture" data-setting="shortcutCreate">Alt + Z</button></div>
+          <div class="shortcut-row"><div><strong>取消创建</strong><p>仅在正在创建片段时生效</p></div><button class="shortcut-capture" data-setting="shortcutCancel">Alt + X</button></div>
+          <div class="shortcut-row"><div><strong>打开提交菜单</strong><p>存在待提交草稿时生效</p></div><button class="shortcut-capture" data-setting="shortcutSubmit">Alt + Enter</button></div>
+          <div class="info-card shortcut-help"><span>设置方法</span><p>点击一个快捷键按钮，再按下新的组合键；按 Esc 取消。快捷键必须包含 Ctrl、Alt、Shift 或 Command 中至少一个修饰键。</p></div>
         </div>
       </section>
 

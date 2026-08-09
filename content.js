@@ -14,6 +14,9 @@
     showToast: true,
     debug: false,
     shortcutsEnabled: true,
+    shortcutCreate: 'Alt+KeyZ',
+    shortcutCancel: 'Alt+KeyX',
+    shortcutSubmit: 'Alt+Enter',
     skippedCount: 0,
     localSegments: {},
   };
@@ -352,17 +355,22 @@
   }
 
   function handleShortcut(event) {
-    if (!settings.shortcutsEnabled || !event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+    if (!settings.shortcutsEnabled || event.repeat) return;
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
     let action='';
-    if(event.code==='KeyZ')action=draftStart===null?'start':'end';
-    if(event.code==='KeyX'&&draftStart!==null)action='cancel';
-    if(event.code==='Enter'&&draftStart===null)action='submit';
+    const signature=shortcutSignature(event);
+    if(signature===settings.shortcutCreate)action=draftStart===null?'start':'end';
+    if(signature===settings.shortcutCancel&&draftStart!==null)action='cancel';
+    if(signature===settings.shortcutSubmit&&draftStart===null)action='submit';
     if(!action)return;
     const controls=ensurePlayerControls();const button=controls?.querySelector(`[data-action="${action}"]`);
     if(!button)return;
     event.preventDefault();event.stopPropagation();button.click();
+  }
+
+  function shortcutSignature(event) {
+    return [event.ctrlKey?'Ctrl':'',event.altKey?'Alt':'',event.shiftKey?'Shift':'',event.metaKey?'Meta':'',event.code].filter(Boolean).join('+');
   }
 
   async function handlePlayerControl(event) {
@@ -654,7 +662,10 @@
       skipSuppressedUntil.set(key, Date.now() + 12000);
       video.currentTime = Math.max(0, segment.start);
       await recordSkip(-1);
-      showToast('已撤销跳过，12 秒内不会再次跳过此片段');
+      showToast('已撤销跳过，12 秒内不会再次自动跳过', [{
+        label:'重新跳过',
+        run:()=>{skipSuppressedUntil.delete(key);lastSegmentSkipKey='';void skipKnownSegment(video,videoId,segment,key)},
+      }]);
     };
     const actions = [{ label:'撤销', run:undo }];
     if (segment.source === 'community' && segment.id) {

@@ -77,10 +77,11 @@ h2 { margin:0; font-size:17px; }
 .setting-row input:checked+i { background:var(--pink); }
 .setting-row input:checked+i::after { transform:translateX(19px); }
 .setting-row select { min-width:190px; padding:9px 34px 9px 11px; border:1px solid #3a3f4a; border-radius:8px; color:var(--text); background:#20232a; }
-.shortcut-row { display:grid; grid-template-columns:1fr auto auto auto; align-items:center; gap:8px; min-height:74px; padding:14px 21px; border-top:1px solid var(--line); }
+.shortcut-row { display:grid; grid-template-columns:1fr auto; align-items:center; gap:16px; min-height:74px; padding:14px 21px; border-top:1px solid var(--line); }
 .shortcut-row p { margin:3px 0 0; color:var(--muted); }
-.shortcut-row kbd { min-width:30px; padding:5px 8px; border:1px solid #4a505c; border-bottom-width:3px; border-radius:6px; color:#fff; background:#292d36; text-align:center; font:600 12px/1.2 inherit; }
-.shortcut-row>span { color:var(--muted); }
+.shortcut-capture { min-width:132px; padding:8px 11px; border:1px solid #4a505c; border-bottom-width:3px; border-radius:7px; color:#fff; background:#292d36; cursor:pointer; font-weight:650; }
+.shortcut-capture.capturing { border-color:var(--cyan); color:var(--cyan); }
+.shortcut-help { margin:14px 20px 20px; }
 .info-card { margin-top:16px; padding:18px 20px; border:1px solid rgba(37,244,238,.2); border-radius:12px; background:rgba(37,244,238,.06); }
 .info-card span { color:var(--cyan); font-weight:700; }
 .info-card p { margin:5px 0 0; color:#b8bdc8; }
