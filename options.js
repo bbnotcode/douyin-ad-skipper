@@ -1,6 +1,6 @@
 const DEFAULT_COMMUNITY_API='https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
 const CATEGORY_LABELS={sponsor:'赞助/广告',selfpromo:'自我推广',interaction:'互动提醒'};
-const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, shortcutsEnabled:true, shortcutCreate:'Alt+KeyZ', shortcutCancel:'Alt+KeyX', shortcutSubmit:'Alt+Enter', skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, communityAutoSkipTrusted:true, communitySkipMode:'auto', communityClientId:'' };
+const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, shortcutsEnabled:true, shortcutCreate:'Alt+KeyZ', shortcutCancel:'Alt+KeyX', shortcutSubmit:'Alt+Enter', skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, communityAutoSkipTrusted:true, communitySkipMode:'auto', categoryModeSponsor:'auto', categoryModeSelfpromo:'manual', categoryModeInteraction:'manual', communityClientId:'' };
 let state = { ...DEFAULTS };
 let capturingShortcut='';
 let communitySegments = [];
@@ -200,7 +200,7 @@ async function uploadAllPending() {
 }
 
 function exportData() {
-  const payload = {format:'douyin-ad-skipper-backup',version:3,exportedAt:new Date().toISOString(),settings:{enabled:state.enabled,skipLabeledAds:state.skipLabeledAds,skipLocalSegments:state.skipLocalSegments,showToast:state.showToast,debug:state.debug,shortcutsEnabled:state.shortcutsEnabled,shortcutCreate:state.shortcutCreate,shortcutCancel:state.shortcutCancel,shortcutSubmit:state.shortcutSubmit,communitySkipMode:state.communitySkipMode},localSegments:state.localSegments};
+  const payload = {format:'douyin-ad-skipper-backup',version:4,exportedAt:new Date().toISOString(),settings:{enabled:state.enabled,skipLabeledAds:state.skipLabeledAds,skipLocalSegments:state.skipLocalSegments,showToast:state.showToast,debug:state.debug,shortcutsEnabled:state.shortcutsEnabled,shortcutCreate:state.shortcutCreate,shortcutCancel:state.shortcutCancel,shortcutSubmit:state.shortcutSubmit,categoryModeSponsor:state.categoryModeSponsor,categoryModeSelfpromo:state.categoryModeSelfpromo,categoryModeInteraction:state.categoryModeInteraction},localSegments:state.localSegments};
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})); const a=document.createElement('a'); a.href=url; a.download=`douyin-ad-skipper-${new Date().toISOString().slice(0,10)}.json`; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); toast('备份已导出');
 }
 
@@ -214,7 +214,7 @@ async function importData(file) {
 
 function syncSettings() {
   ['enabled','skipLabeledAds','skipLocalSegments','showToast','debug','shortcutsEnabled','communityEnabled'].forEach((key)=>{ $(`#${key}`).checked=Boolean(state[key]); });
-  $('#communitySkipMode').value=state.communitySkipMode||'auto';
+  document.querySelectorAll('.category-mode').forEach((select)=>{select.value=state[select.dataset.setting]||DEFAULTS[select.dataset.setting]});
   document.querySelectorAll('.shortcut-capture').forEach((button)=>{button.textContent=formatShortcut(state[button.dataset.setting]||DEFAULTS[button.dataset.setting])});
   $('#communityApiBase').value = state.communityApiBase || '';
   renderCommunityStatus();
@@ -262,7 +262,7 @@ document.addEventListener('keydown',async(event)=>{
   const key=capturingShortcut;capturingShortcut='';state[key]=signature;await chrome.storage.local.set({[key]:signature});button?.classList.remove('capturing');syncSettings();toast('快捷键已保存');
 },true);
 ['enabled','skipLabeledAds','skipLocalSegments','showToast','debug','shortcutsEnabled'].forEach((key)=>$(`#${key}`).addEventListener('change',(event)=>{state[key]=event.target.checked;chrome.storage.local.set({[key]:state[key]});toast('设置已保存')}));
-$('#communitySkipMode').addEventListener('change',async(event)=>{state.communitySkipMode=event.target.value;state.communityAutoSkipTrusted=state.communitySkipMode==='auto';const update={communitySkipMode:state.communitySkipMode,communityAutoSkipTrusted:state.communityAutoSkipTrusted};if(state.communitySkipMode==='manual'){state.showToast=true;update.showToast=true;$('#showToast').checked=true}await chrome.storage.local.set(update);toast('社区片段处理方式已保存')});
+document.querySelectorAll('.category-mode').forEach((select)=>select.addEventListener('change',async(event)=>{const key=event.target.dataset.setting;state[key]=event.target.value;const update={[key]:state[key]};if(state[key]==='manual'){state.showToast=true;update.showToast=true;$('#showToast').checked=true}await chrome.storage.local.set(update);toast('分类处理方式已保存')}));
 $('#communityEnabled').addEventListener('change',async(event)=>{
   if(event.target.checked&&!state.communityApiBase){event.target.checked=false;toast('请先授权并连接 API');return}
   state.communityEnabled=event.target.checked;await chrome.storage.local.set({communityEnabled:state.communityEnabled});renderCommunityStatus();toast('社区查询设置已保存');
@@ -298,5 +298,5 @@ $('#importData').addEventListener('click',()=>$('#importFile').click());
 $('#importFile').addEventListener('change',(event)=>{if(event.target.files[0])importData(event.target.files[0]);event.target.value=''});
 $('#clearSegments').addEventListener('click',async()=>{if(confirm('确定清空所有本地片段吗？此操作无法撤销。')){state.localSegments={};await chrome.storage.local.set({localSegments:{}});renderOverview();renderSegments();toast('本地片段已清空')}});
 
-(async()=>{const stored=await chrome.storage.local.get(DEFAULTS);state={...DEFAULTS,...stored};if(!stored.communitySkipMode)state.communitySkipMode=stored.communityAutoSkipTrusted===false?'manual':'auto';if(!state.communityApiBase||/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}state.communityClientId=await getContributorId();syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');await fetchMyContributions()})();
+(async()=>{const stored=await chrome.storage.local.get(DEFAULTS);state={...DEFAULTS,...stored};if(!state.communityApiBase||/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}state.communityClientId=await getContributorId();$('#extensionVersion').textContent=`版本 ${chrome.runtime.getManifest().version}`;syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');await fetchMyContributions()})();
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;for(const [key,change] of Object.entries(changes))state[key]=change.newValue;renderOverview()});

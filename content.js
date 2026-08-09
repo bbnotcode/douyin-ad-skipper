@@ -10,6 +10,9 @@
     communityApiBase: DEFAULT_COMMUNITY_API,
     communityAutoSkipTrusted: true,
     communitySkipMode: 'auto',
+    categoryModeSponsor: 'auto',
+    categoryModeSelfpromo: 'manual',
+    categoryModeInteraction: 'manual',
     communityClientId: '',
     showToast: true,
     debug: false,
@@ -36,6 +39,7 @@
   const communityCache = new Map();
   const COMMUNITY_CACHE_MS = 10 * 60 * 1000;
   const CATEGORY_LABELS = { sponsor:'赞助/广告', selfpromo:'自我推广', interaction:'互动提醒' };
+  const CATEGORY_SETTING_KEYS = { sponsor:'categoryModeSponsor', selfpromo:'categoryModeSelfpromo', interaction:'categoryModeInteraction' };
 
   const log = (...args) => settings.debug && console.debug('[抖音广告跳过]', ...args);
 
@@ -635,21 +639,20 @@
     loadCommunitySegments(video);
     const now = video.currentTime;
     const localAvailable = settings.skipLocalSegments ? currentSegments(video) : [];
-    const trustedCommunity = settings.communitySkipMode === 'disabled' ? [] : communitySegments(video).filter((segment) => segment.status === 'trusted');
-    if (settings.communitySkipMode === 'manual') {
-      const manualSegment = trustedCommunity.find(({start,end}) => now >= start - 0.12 && now < end - 0.05);
-      if (manualSegment) {
-        const noticeKey=`${videoId}:${manualSegment.id}:${manualSegment.start}`;
-        if(manualNoticeKey!==noticeKey){
-          manualNoticeKey=noticeKey;
-          showToast(`发现广告片段 ${formatTime(manualSegment.start)}–${formatTime(manualSegment.end)}`, [
-            {label:'立即跳过',run:()=>skipKnownSegment(video,videoId,manualSegment)},
-            {label:'本次忽略',run:()=>skipSuppressedUntil.set(`${videoId}:${manualSegment.start}:${manualSegment.end}`,Date.now()+Math.max(1000,(manualSegment.end-video.currentTime+1)*1000))},
-          ]);
-        }
-      } else manualNoticeKey='';
-    }
-    const available = [...localAvailable, ...(settings.communitySkipMode === 'auto' ? trustedCommunity : [])];
+    const trustedCommunity = communitySegments(video).filter((segment) => segment.status === 'trusted');
+    const modeFor=(segment)=>settings[CATEGORY_SETTING_KEYS[segment.category||'sponsor']]||'manual';
+    const manualSegment = trustedCommunity.filter((segment)=>modeFor(segment)==='manual').find(({start,end}) => now >= start - 0.12 && now < end - 0.05);
+    if (manualSegment) {
+      const noticeKey=`${videoId}:${manualSegment.id}:${manualSegment.start}`;
+      if(manualNoticeKey!==noticeKey){
+        manualNoticeKey=noticeKey;
+        showToast(`发现${CATEGORY_LABELS[manualSegment.category||'sponsor']} ${formatTime(manualSegment.start)}–${formatTime(manualSegment.end)}`, [
+          {label:'立即跳过',run:()=>skipKnownSegment(video,videoId,manualSegment)},
+          {label:'本次忽略',run:()=>skipSuppressedUntil.set(`${videoId}:${manualSegment.start}:${manualSegment.end}`,Date.now()+Math.max(1000,(manualSegment.end-video.currentTime+1)*1000))},
+        ]);
+      }
+    } else manualNoticeKey='';
+    const available = [...localAvailable, ...trustedCommunity.filter((segment)=>modeFor(segment)==='auto')];
     const segment = available.find(({ start, end }) => now >= start - 0.12 && now < end - 0.05);
     if (!segment) return;
     const key = `${videoId}:${segment.start}:${segment.end}`;

@@ -86,7 +86,9 @@
             <div class="community-input"><input id="communityApiBase" type="url" placeholder="https://your-worker.workers.dev"><button id="connectCommunity">授权并连接</button></div>
           </div>
           <label class="setting-row"><div><strong>启用社区查询</strong><p>只发送当前作品 ID，不上传完整观看历史</p></div><input id="communityEnabled" type="checkbox"><i></i></label>
-          <div class="setting-row"><div><strong>社区片段处理方式</strong><p>错误片段收到社区反对或举报后会停止下发</p></div><select id="communitySkipMode"><option value="auto">自动跳过</option><option value="manual">显示提示，手动跳过</option><option value="disabled">不处理社区片段</option></select></div>
+          <div class="setting-row"><div><strong>赞助 / 广告</strong><p>付费推广、推荐和直接广告</p></div><select class="category-mode" data-setting="categoryModeSponsor"><option value="auto">自动跳过</option><option value="manual">显示提示</option><option value="disabled">不处理</option></select></div>
+          <div class="setting-row"><div><strong>自我推广</strong><p>作者推广自己的商品、账号或服务</p></div><select class="category-mode" data-setting="categoryModeSelfpromo"><option value="auto">自动跳过</option><option value="manual">显示提示</option><option value="disabled">不处理</option></select></div>
+          <div class="setting-row"><div><strong>互动提醒</strong><p>点赞、关注、评论等简短提醒</p></div><select class="category-mode" data-setting="categoryModeInteraction"><option value="auto">自动跳过</option><option value="manual">显示提示</option><option value="disabled">不处理</option></select></div>
         </div>
         <div class="community-actions"><button id="disconnectCommunity" class="secondary-button">恢复默认公共 API</button></div>
         <div class="info-card"><span>隐私设计</span><p>远程查询失败时会立即回退到本地数据。扩展不会自动上传你创建的片段，只有点击播放器提交按钮或片段管理中的上传按钮时才会发送。</p></div>
@@ -103,7 +105,7 @@
 
       <section class="page" data-page="about">
         <div class="page-head"><div><p class="eyebrow">ABOUT</p><h1>关于抖音广告跳过</h1><p>一个开源、社区驱动的 Chrome 扩展。</p></div></div>
-        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p>版本 0.5.0</p><p>支持本地片段和社区共享。社区查询默认启用，本地片段仍只会在你主动点击提交时上传。</p></div></div>
+        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p id="extensionVersion"></p><p>支持本地片段和社区共享。社区查询默认启用，本地片段仍只会在你主动点击提交时上传。</p></div></div>
       </section>
     </main>
   </div>
