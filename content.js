@@ -9,9 +9,11 @@
     communityEnabled: true,
     communityApiBase: DEFAULT_COMMUNITY_API,
     communityAutoSkipTrusted: true,
+    communitySkipMode: 'auto',
     communityClientId: '',
     showToast: true,
     debug: false,
+    shortcutsEnabled: true,
     skippedCount: 0,
     localSegments: {},
   };
@@ -26,6 +28,7 @@
   let draftVideoId = null;
   let lastSegmentSkipKey = '';
   let mountScheduled = false;
+  let manualNoticeKey = '';
   const skipSuppressedUntil = new Map();
   const communityCache = new Map();
   const COMMUNITY_CACHE_MS = 10 * 60 * 1000;
@@ -145,6 +148,7 @@
   }
 
   function communitySegments(video) {
+    if (settings.communitySkipMode === 'disabled') return [];
     const id = extractVideoId(video);
     const cached = id && communityCache.get(id);
     return cached?.segments || [];
@@ -160,7 +164,7 @@
   }
 
   async function loadCommunitySegments(video) {
-    if (!settings.communityEnabled) return;
+    if (!settings.communityEnabled || settings.communitySkipMode === 'disabled') return;
     const videoId = extractVideoId(video);
     const apiBase = normalizedApiBase();
     if (!videoId || !apiBase) return;
@@ -339,6 +343,20 @@
       mountScheduled = false;
       ensurePlayerControls();
     });
+  }
+
+  function handleShortcut(event) {
+    if (!settings.shortcutsEnabled || !event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
+    let action='';
+    if(event.code==='KeyZ')action=draftStart===null?'start':'end';
+    if(event.code==='KeyX'&&draftStart!==null)action='cancel';
+    if(event.code==='Enter'&&draftStart===null)action='submit';
+    if(!action)return;
+    const controls=ensurePlayerControls();const button=controls?.querySelector(`[data-action="${action}"]`);
+    if(!button)return;
+    event.preventDefault();event.stopPropagation();button.click();
   }
 
   async function handlePlayerControl(event) {
@@ -581,22 +599,40 @@
   }
 
   async function checkLocalSegments() {
-    if (!settings.enabled || !settings.skipLocalSegments || document.hidden) return;
+    if (!settings.enabled || document.hidden) return;
     const video = getActiveVideo();
     if (!video || video.paused || video.seeking) return;
     const videoId = extractVideoId(video);
     if (!videoId) return;
     loadCommunitySegments(video);
     const now = video.currentTime;
-    const available = [
-      ...currentSegments(video),
-      ...(settings.communityAutoSkipTrusted ? communitySegments(video).filter((segment) => segment.status === 'trusted') : []),
-    ];
+    const localAvailable = settings.skipLocalSegments ? currentSegments(video) : [];
+    const trustedCommunity = settings.communitySkipMode === 'disabled' ? [] : communitySegments(video).filter((segment) => segment.status === 'trusted');
+    if (settings.communitySkipMode === 'manual') {
+      const manualSegment = trustedCommunity.find(({start,end}) => now >= start - 0.12 && now < end - 0.05);
+      if (manualSegment) {
+        const noticeKey=`${videoId}:${manualSegment.id}:${manualSegment.start}`;
+        if(manualNoticeKey!==noticeKey){
+          manualNoticeKey=noticeKey;
+          showToast(`发现广告片段 ${formatTime(manualSegment.start)}–${formatTime(manualSegment.end)}`, [
+            {label:'立即跳过',run:()=>skipKnownSegment(video,videoId,manualSegment)},
+            {label:'本次忽略',run:()=>skipSuppressedUntil.set(`${videoId}:${manualSegment.start}:${manualSegment.end}`,Date.now()+Math.max(1000,(manualSegment.end-video.currentTime+1)*1000))},
+          ]);
+        }
+      } else manualNoticeKey='';
+    }
+    const available = [...localAvailable, ...(settings.communitySkipMode === 'auto' ? trustedCommunity : [])];
     const segment = available.find(({ start, end }) => now >= start - 0.12 && now < end - 0.05);
     if (!segment) return;
     const key = `${videoId}:${segment.start}:${segment.end}`;
     if (Number(skipSuppressedUntil.get(key) || 0) > Date.now()) return;
     if (lastSegmentSkipKey === key && Math.abs(now - segment.start) > 0.5) return;
+    await skipKnownSegment(video,videoId,segment,key);
+  }
+
+  async function skipKnownSegment(video, videoId, segment, knownKey) {
+    const key=knownKey||`${videoId}:${segment.start}:${segment.end}`;
+    if (Number(skipSuppressedUntil.get(key) || 0) > Date.now()) return;
     lastSegmentSkipKey = key;
     video.currentTime = Math.min(segment.end, video.duration || segment.end);
     await recordSkip();
@@ -727,6 +763,7 @@
   (async () => {
     const stored = await chrome.storage.local.get(DEFAULTS);
     settings = { ...DEFAULTS, ...stored };
+    if (!stored.communitySkipMode) settings.communitySkipMode = stored.communityAutoSkipTrusted === false ? 'manual' : 'auto';
     if (!settings.communityApiBase || /^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
       settings.communityApiBase = DEFAULT_COMMUNITY_API;
       settings.communityEnabled = true;
@@ -757,6 +794,7 @@
   document.addEventListener('play', schedulePlayerControls, true);
   document.addEventListener('loadedmetadata', schedulePlayerControls, true);
   document.addEventListener('pointermove', schedulePlayerControls, { passive: true });
+  document.addEventListener('keydown', handleShortcut, true);
   setInterval(checkCurrentVideo, CHECK_INTERVAL_MS);
   setInterval(checkLocalSegments, 250);
   setInterval(schedulePlayerControls, 300);
