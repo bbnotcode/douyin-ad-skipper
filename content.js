@@ -387,6 +387,7 @@
         showToast('结束时间必须晚于开始时间');
         return;
       }
+      if (end - draftStart < 1 && !confirm('这个片段不足 1 秒，时间点可能不准确。仍然保存吗？')) return;
       const savedStart = draftStart;
       const metadata = getVideoMetadata(video, videoId);
       const segments = mergeOverlappingDrafts([...currentSegments(video), { start: savedStart, end, createdAt: Date.now(), submissionStatus: 'pending', previewed:false, ...metadata }]);
@@ -592,6 +593,9 @@
     bar.replaceChildren(...items.map((item) => {
       const segment = document.createElement('span');
       segment.className = `das-preview-segment das-${item.previewState}`;
+      const stateName = item.previewState === 'pending' ? '待提交广告片段' : item.previewState === 'candidate' ? '待确认广告片段' : '社区广告片段';
+      segment.title = `${stateName} ${formatTime(item.start)}–${formatTime(item.end)}`;
+      segment.setAttribute('aria-label', segment.title);
       segment.style.left = `${Math.max(0, item.start / video.duration * 100)}%`;
       segment.style.width = `${Math.max(0.08, (Math.min(video.duration, item.end) - Math.max(0, item.start)) / video.duration * 100)}%`;
       return segment;

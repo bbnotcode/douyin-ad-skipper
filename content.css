@@ -98,6 +98,7 @@
   min-width: 1px;
   background: #00d400;
   opacity: .82;
+  pointer-events: auto;
 }
 
 .das-preview-segment.das-pending { background: #007800; }
