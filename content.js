@@ -597,7 +597,11 @@
     };
     const actions = [{ label:'撤销', run:undo }];
     if (segment.source === 'community' && segment.id) {
-      actions.push({ label:'赞成', run:()=>voteOnSegment(segment,1) }, { label:'有问题', run:()=>voteOnSegment(segment,-1) });
+      actions.push(
+        { label:'赞成', run:()=>voteOnSegment(segment,1) },
+        { label:'反对', run:()=>voteOnSegment(segment,-1) },
+        { label:'举报', run:()=>showReportChoices(segment) },
+      );
     }
     showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}`, actions);
     log(segment.source === 'community' ? '跳过社区可信片段' : '跳过本地标记片段', videoId, segment);
@@ -631,6 +635,31 @@
     } catch (error) {
       log('片段投票失败', error);
       showToast('反馈失败，请稍后重试');
+    }
+  }
+
+  function showReportChoices(segment) {
+    showToast('请选择问题类型', [
+      { label:'时间错误', run:()=>reportSegment(segment,'wrong_time') },
+      { label:'不是广告', run:()=>reportSegment(segment,'not_ad') },
+      { label:'视频不符', run:()=>reportSegment(segment,'wrong_video') },
+      { label:'滥用', run:()=>reportSegment(segment,'abuse') },
+    ]);
+  }
+
+  async function reportSegment(segment, reason) {
+    const apiBase = normalizedApiBase();
+    if (!apiBase || !settings.communityClientId) return;
+    try {
+      const response = await fetch(`${apiBase}/v1/segments/${segment.id}/reports`, {
+        method:'POST', headers:{'Content-Type':'application/json','X-Client-ID':settings.communityClientId}, body:JSON.stringify({reason}),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await response.json();
+      showToast('举报已提交，感谢帮助维护社区质量');
+    } catch (error) {
+      log('片段举报失败', error);
+      showToast('举报失败，请稍后重试');
     }
   }
 
