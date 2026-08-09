@@ -485,6 +485,7 @@
     button.textContent = '提交中…';
     const segments = [...currentSegments(video)];
     const submittedSegments = new Set();
+    const confirmedCommunitySegments = [];
     let submitted = 0;
     for (const segment of segments) {
       if ((segment.submissionStatus || 'pending') !== 'pending') continue;
@@ -495,7 +496,17 @@
           body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: 'sponsor', clientRequestId: crypto.randomUUID() }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        await response.json();
+        const payload = await response.json();
+        const confirmed = payload.segment;
+        if (confirmed && Number.isFinite(confirmed.start) && Number.isFinite(confirmed.end)) {
+          confirmedCommunitySegments.push({
+            start: confirmed.start,
+            end: confirmed.end,
+            source: 'community',
+            id: confirmed.id,
+            status: confirmed.status || 'trusted',
+          });
+        }
         submittedSegments.add(segment);
         submitted += 1;
       } catch (error) {
@@ -507,8 +518,12 @@
     if (remaining.length) localSegments[videoId] = remaining;
     else delete localSegments[videoId];
     settings.localSegments = localSegments;
+    if (confirmedCommunitySegments.length) {
+      const cached = communityCache.get(videoId);
+      const byId = new Map([...(cached?.segments || []), ...confirmedCommunitySegments].map((item) => [item.id || `${item.start}:${item.end}`, item]));
+      setCommunityCache(videoId, { loadedAt: Date.now(), segments: [...byId.values()] });
+    }
     await chrome.storage.local.set({ localSegments });
-    if (submitted) communityCache.delete(videoId);
     closeSubmissionMenu();
     renderPlayerControls();
     renderPreviewBar();
