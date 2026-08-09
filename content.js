@@ -117,6 +117,33 @@
     return id ? (settings.localSegments?.[id] || []) : [];
   }
 
+  function mergeOverlappingDrafts(segments) {
+    const sorted = [...segments].sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const segment of sorted) {
+      const previous = merged[merged.length - 1];
+      if (!previous || segment.start > previous.end + 0.25) {
+        merged.push(segment);
+        continue;
+      }
+      merged[merged.length - 1] = {
+        ...previous,
+        ...segment,
+        start: Math.min(previous.start, segment.start),
+        end: Math.max(previous.end, segment.end),
+        createdAt: Date.now(),
+        previewed: false,
+      };
+    }
+    return merged;
+  }
+
+  function setCommunityCache(videoId, value) {
+    communityCache.delete(videoId);
+    communityCache.set(videoId, value);
+    while (communityCache.size > 100) communityCache.delete(communityCache.keys().next().value);
+  }
+
   function communitySegments(video) {
     const id = extractVideoId(video);
     const cached = id && communityCache.get(id);
@@ -139,7 +166,7 @@
     if (!videoId || !apiBase) return;
     const cached = communityCache.get(videoId);
     if (cached && Date.now() - cached.loadedAt < COMMUNITY_CACHE_MS) return;
-    communityCache.set(videoId, { loadedAt: Date.now(), segments: cached?.segments || [], loading: true });
+    setCommunityCache(videoId, { loadedAt: Date.now(), segments: cached?.segments || [], loading: true });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4000);
     try {
@@ -152,11 +179,11 @@
       const segments = Array.isArray(payload.segments) ? payload.segments
         .filter((item) => item.category === 'sponsor' && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
         .map((item) => ({ start: item.start, end: item.end, source: 'community', id: item.id, status: item.status })) : [];
-      communityCache.set(videoId, { loadedAt: Date.now(), segments });
+      setCommunityCache(videoId, { loadedAt: Date.now(), segments });
       renderPreviewBar();
       log('已加载社区片段', videoId, segments.length);
     } catch (error) {
-      communityCache.set(videoId, { loadedAt: Date.now(), segments: cached?.segments || [] });
+      setCommunityCache(videoId, { loadedAt: Date.now(), segments: cached?.segments || [] });
       log('社区片段查询失败，继续使用本地数据', error);
     } finally {
       clearTimeout(timer);
@@ -344,8 +371,7 @@
       }
       const savedStart = draftStart;
       const metadata = getVideoMetadata(video, videoId);
-      const segments = [...currentSegments(video), { start: savedStart, end, createdAt: Date.now(), submissionStatus: 'pending', ...metadata }]
-        .sort((a, b) => a.start - b.start);
+      const segments = mergeOverlappingDrafts([...currentSegments(video), { start: savedStart, end, createdAt: Date.now(), submissionStatus: 'pending', previewed:false, ...metadata }]);
       const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
       settings.localSegments = localSegments;
       await chrome.storage.local.set({ localSegments });
@@ -559,7 +585,11 @@
     lastSegmentSkipKey = key;
     video.currentTime = Math.min(segment.end, video.duration || segment.end);
     await recordSkip();
+    const impactTimer = segment.source === 'community' && segment.id
+      ? setTimeout(() => { void recordCommunitySkip(segment); }, 3000)
+      : null;
     const undo = async () => {
+      if (impactTimer) clearTimeout(impactTimer);
       skipSuppressedUntil.set(key, Date.now() + 12000);
       video.currentTime = Math.max(0, segment.start);
       await recordSkip(-1);
@@ -571,6 +601,20 @@
     }
     showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}`, actions);
     log(segment.source === 'community' ? '跳过社区可信片段' : '跳过本地标记片段', videoId, segment);
+  }
+
+  async function recordCommunitySkip(segment) {
+    const apiBase = normalizedApiBase();
+    if (!apiBase || !settings.communityClientId) return;
+    try {
+      const response = await fetch(`${apiBase}/v1/segments/${segment.id}/skips`, {
+        method:'POST', headers:{'X-Client-ID':settings.communityClientId},
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      log('已记录社区片段贡献', segment.id);
+    } catch (error) {
+      log('记录社区片段贡献失败', error);
+    }
   }
 
   async function voteOnSegment(segment, vote) {

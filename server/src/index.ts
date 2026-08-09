@@ -98,10 +98,44 @@ async function getMySegments(request: Request, env: Env): Promise<Response> {
     ORDER BY created_at DESC LIMIT 500
   `).bind(identity).all<SegmentRow>();
   const contributedMs = result.results.reduce((sum, row) => sum + Math.max(0, row.end_ms - row.start_ms), 0);
+  const impact = await env.DB.prepare(`
+    SELECT COUNT(*) AS skip_count, COUNT(DISTINCT skips.viewer_hash) AS helped_people,
+      COALESCE(SUM(skips.seconds_saved), 0) AS seconds_saved
+    FROM segment_skips AS skips
+    INNER JOIN segments ON segments.id = skips.segment_id
+    WHERE segments.submitter_hash = ?
+  `).bind(identity).first<{ skip_count: number; helped_people: number; seconds_saved: number }>();
   return json({
     segments: result.results.map(segmentJson),
-    stats: { submittedCount: result.results.length, contributedSeconds: contributedMs / 1000 },
+    stats: {
+      submittedCount: result.results.length,
+      contributedSeconds: contributedMs / 1000,
+      skipCount: Number(impact?.skip_count || 0),
+      helpedPeople: Number(impact?.helped_people || 0),
+      secondsSaved: Number(impact?.seconds_saved || 0),
+    },
   });
+}
+
+async function recordSegmentSkip(request: Request, env: Env, segmentId: string): Promise<Response> {
+  const viewer = await contributorHash(request, env);
+  if (viewer === null) return json({ error: 'writes_not_configured' }, 503);
+  if (!viewer) return json({ error: 'invalid_client_id' }, 400);
+  const rateIdentity = await rateIdentityHash(request, env);
+  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'skip', 300)) return json({ error: 'rate_limited' }, 429);
+  const segment = await env.DB.prepare(`
+    SELECT start_ms, end_ms, submitter_hash FROM segments
+    WHERE id = ? AND status = 'trusted'
+  `).bind(segmentId).first<{ start_ms: number; end_ms: number; submitter_hash: string }>();
+  if (!segment) return json({ error: 'segment_not_found' }, 404);
+  if (segment.submitter_hash === viewer) return json({ recorded: false, reason: 'own_segment' });
+  const secondsSaved = Math.max(1, Math.round((segment.end_ms - segment.start_ms) / 1000));
+  const day = new Date().toISOString().slice(0, 10);
+  const result = await env.DB.prepare(`
+    INSERT OR IGNORE INTO segment_skips (segment_id, viewer_hash, day, seconds_saved, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(segmentId, viewer, day, secondsSaved, new Date().toISOString()).run();
+  return json({ recorded: Number(result.meta.changes || 0) > 0, secondsSaved });
 }
 
 async function submitSegment(request: Request, env: Env): Promise<Response> {
@@ -185,6 +219,8 @@ export default {
       if (request.method === 'POST' && path === '/v1/segments') return submitSegment(request, env);
       const voteMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/votes$/i);
       if (request.method === 'POST' && voteMatch) return vote(request, env, voteMatch[1]);
+      const skipMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/skips$/i);
+      if (request.method === 'POST' && skipMatch) return recordSegmentSkip(request, env, skipMatch[1]);
       const reportMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/reports$/i);
       if (request.method === 'POST' && reportMatch) return report(request, env, reportMatch[1]);
       return json({ error: 'not_found' }, 404);

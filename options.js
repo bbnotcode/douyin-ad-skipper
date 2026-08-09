@@ -2,7 +2,7 @@ const DEFAULT_COMMUNITY_API='https://douyin-ad-skipper-api.douyin-skip-community
 const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, communityAutoSkipTrusted:true, communityClientId:'' };
 let state = { ...DEFAULTS };
 let communitySegments = [];
-let communityStats = { submittedCount:0, contributedSeconds:0 };
+let communityStats = { submittedCount:0, contributedSeconds:0, skipCount:0, helpedPeople:0, secondsSaved:0 };
 
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
@@ -39,8 +39,8 @@ function renderOverview() {
   $('#metricVideos').textContent = new Set(segments.map((item)=>item.videoId)).size;
   $('#metricSkips').textContent = Number(state.skippedCount || 0).toLocaleString('zh-CN');
   $('#metricDuration').textContent = formatTime(duration);
-  $('#metricContributionDuration').textContent = formatContribution(communityStats.contributedSeconds);
-  $('#metricContributionCount').textContent = `已提交 ${communityStats.submittedCount} 个片段`;
+  $('#metricContributionDuration').textContent = formatContribution(communityStats.secondsSaved);
+  $('#metricContributionCount').textContent = `帮助 ${communityStats.helpedPeople} 人跳过 ${communityStats.skipCount} 次 · 已提交 ${communityStats.submittedCount} 个片段`;
   $('#navSegmentCount').textContent = segments.length;
   const recent = [...segments].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,5);
   $('#recentSegments').innerHTML = recent.length ? recent.map((item) => `<div class="recent-item"><div><strong>${escapeHtml(segmentTitle(item))}</strong><span>${escapeHtml(segmentAuthor(item))} · ${formatTime(item.start)}–${formatTime(item.end)}</span></div><span>${item.createdAt ? new Date(item.createdAt).toLocaleDateString('zh-CN') : '旧版片段'}</span></div>`).join('') : '<div class="empty">还没有创建片段。请在抖音播放器控制栏点击标记图标。</div>';
@@ -79,11 +79,11 @@ async function getContributorId() {
 async function fetchMyContributions() {
   if(!state.communityEnabled||!state.communityApiBase||!state.communityClientId)return;
   try{
-    const response=await fetch(`${new URL(state.communityApiBase).origin}/v1/me/segments`,{headers:{Accept:'application/json','X-Client-ID':state.communityClientId}});
+    const response=await fetch(`${new URL(state.communityApiBase).origin}/v1/me/segments?apiVersion=2`,{headers:{Accept:'application/json','X-Client-ID':state.communityClientId}});
     if(!response.ok)throw new Error(`HTTP ${response.status}`);
     const payload=await response.json();
     communitySegments=Array.isArray(payload.segments)?payload.segments.map((segment)=>({...segment,storageSource:'community',submissionStatus:'submitted'})):[];
-    communityStats={submittedCount:Number(payload.stats?.submittedCount||0),contributedSeconds:Number(payload.stats?.contributedSeconds||0)};
+    communityStats={submittedCount:Number(payload.stats?.submittedCount||0),contributedSeconds:Number(payload.stats?.contributedSeconds||0),skipCount:Number(payload.stats?.skipCount||0),helpedPeople:Number(payload.stats?.helpedPeople||0),secondsSaved:Number(payload.stats?.secondsSaved||0)};
     const remoteIds=new Set(communitySegments.map((item)=>item.id));
     const remoteTimes=new Set(communitySegments.map((item)=>`${item.videoId}:${Number(item.start).toFixed(3)}:${Number(item.end).toFixed(3)}`));
     let changed=false;const localSegments={};
