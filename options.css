@@ -60,6 +60,10 @@ h2 { margin:0; font-size:17px; }
 .video-head span { display:block; color:var(--muted); font-size:12px; }
 .video-head em { padding:4px 9px; border-radius:99px; color:var(--cyan); background:rgba(37,244,238,.09); font-size:11px; font-style:normal; }
 .segment-row { display:grid; grid-template-columns:120px 1fr auto; align-items:center; gap:18px; padding:14px 19px; border-top:1px solid var(--line); }
+.nudge-controls { display:grid; grid-template-columns:repeat(2,1fr); gap:4px; margin-top:7px; }
+.nudge-controls button { padding:3px 5px; border:1px solid #3a404b; border-radius:5px; color:#abb1bd; background:#22262e; cursor:pointer; font-size:10px; }
+.nudge-controls button:hover { border-color:var(--cyan); color:var(--cyan); }
+.category-select { max-width:118px; padding:7px 8px; border:1px solid #3a3f4a; border-radius:7px; color:var(--text); background:#20232a; }
 .time-range { color:#fff; font-weight:650; font-variant-numeric:tabular-nums; }
 .duration-pill { color:var(--muted); font-size:12px; }
 .edit-button { padding:7px 10px; border:1px solid #3b4350; border-radius:8px; color:#c7cbd3; background:#252932; cursor:pointer; }

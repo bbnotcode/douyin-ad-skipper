@@ -35,6 +35,7 @@
   const skipSuppressedUntil = new Map();
   const communityCache = new Map();
   const COMMUNITY_CACHE_MS = 10 * 60 * 1000;
+  const CATEGORY_LABELS = { sponsor:'赞助/广告', selfpromo:'自我推广', interaction:'互动提醒' };
 
   const log = (...args) => settings.debug && console.debug('[抖音广告跳过]', ...args);
 
@@ -190,8 +191,8 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       const segments = Array.isArray(payload.segments) ? payload.segments
-        .filter((item) => item.category === 'sponsor' && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
-        .map((item) => ({ start: item.start, end: item.end, source: 'community', id: item.id, status: item.status })) : [];
+        .filter((item) => CATEGORY_LABELS[item.category] && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+        .map((item) => ({ start: item.start, end: item.end, category:item.category, source: 'community', id: item.id, status: item.status })) : [];
       setCommunityCache(videoId, { loadedAt: Date.now(), segments });
       renderPreviewBar();
       log('已加载社区片段', videoId, segments.length);
@@ -404,7 +405,7 @@
       if (end - draftStart < 1 && !confirm('这个片段不足 1 秒，时间点可能不准确。仍然保存吗？')) return;
       const savedStart = draftStart;
       const metadata = getVideoMetadata(video, videoId);
-      const segments = mergeOverlappingDrafts([...currentSegments(video), { start: savedStart, end, createdAt: Date.now(), submissionStatus: 'pending', previewed:false, ...metadata }]);
+      const segments = mergeOverlappingDrafts([...currentSegments(video), { start: savedStart, end, category:'sponsor', createdAt: Date.now(), submissionStatus: 'pending', previewed:false, ...metadata }]);
       const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
       settings.localSegments = localSegments;
       await chrome.storage.local.set({ localSegments });
@@ -463,7 +464,7 @@
     const allPreviewed = pending.every((item) => item.previewed === true);
     menu.innerHTML = `<header><strong>提交广告片段</strong><button type="button" data-menu-action="close" aria-label="关闭">×</button></header>
       <p>提交前请逐段预览，确认开始和结束时间准确。</p>
-      <ol>${pending.map((item,index) => `<li><span>${formatTime(item.start)} – ${formatTime(item.end)}<small>${item.previewed?'✓ 已预览':'尚未预览'}</small></span><button type="button" data-menu-action="preview" data-preview-index="${index}">${item.previewed?'重新预览':'预览'}</button></li>`).join('')}</ol>
+      <ol>${pending.map((item,index) => `<li><span>${formatTime(item.start)} – ${formatTime(item.end)}<small>${item.previewed?'✓ 已预览':'尚未预览'}</small></span><select data-menu-action="category" data-preview-index="${index}" aria-label="片段分类"><option value="sponsor" ${(item.category||'sponsor')==='sponsor'?'selected':''}>赞助/广告</option><option value="selfpromo" ${item.category==='selfpromo'?'selected':''}>自我推广</option><option value="interaction" ${item.category==='interaction'?'selected':''}>互动提醒</option></select><button type="button" data-menu-action="preview" data-preview-index="${index}">${item.previewed?'重新预览':'预览'}</button></li>`).join('')}</ol>
       <div class="das-submission-actions"><button type="button" data-menu-action="submit" ${allPreviewed?'':'disabled'}>${allPreviewed?'提交到社区':'请先预览全部'}</button><button type="button" data-menu-action="keep">暂时保留本地</button></div>`;
     menu.addEventListener('pointerdown', (event) => event.stopPropagation());
     menu.addEventListener('click', async (event) => {
@@ -472,6 +473,13 @@
       if (action === 'close' || action === 'keep') closeSubmissionMenu();
       if (action === 'preview') await previewPendingSegment(video, videoId, pending[Number(event.target.closest('button').dataset.previewIndex)]);
       if (action === 'submit') await submitPendingSegments(video, videoId, menu);
+    });
+    menu.addEventListener('change', async (event) => {
+      const select=event.target.closest('select[data-menu-action="category"]');if(!select)return;
+      const target=pending[Number(select.dataset.previewIndex)];if(!target||!CATEGORY_LABELS[select.value])return;
+      const segments=[...(settings.localSegments?.[videoId]||[])];const stored=segments.find((item)=>item.createdAt===target.createdAt);
+      if(stored)stored.category=select.value;target.category=select.value;
+      settings.localSegments={...(settings.localSegments||{}),[videoId]:segments};await chrome.storage.local.set({localSegments:settings.localSegments});renderPreviewBar();
     });
     player.appendChild(menu);
   }
@@ -526,7 +534,7 @@
         const response = await fetch(`${apiBase}/v1/segments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Client-ID': settings.communityClientId },
-          body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: 'sponsor', clientRequestId: crypto.randomUUID() }),
+          body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: segment.category || 'sponsor', clientRequestId: crypto.randomUUID() }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
@@ -538,6 +546,7 @@
             source: 'community',
             id: confirmed.id,
             status: confirmed.status || 'trusted',
+            category: confirmed.category || segment.category || 'sponsor',
           });
         }
         submittedSegments.add(segment);
@@ -606,9 +615,10 @@
     items.sort((a, b) => (b.end - b.start) - (a.end - a.start));
     bar.replaceChildren(...items.map((item) => {
       const segment = document.createElement('span');
-      segment.className = `das-preview-segment das-${item.previewState}`;
-      const stateName = item.previewState === 'pending' ? '待提交广告片段' : item.previewState === 'candidate' ? '待确认广告片段' : '社区广告片段';
-      segment.title = `${stateName} ${formatTime(item.start)}–${formatTime(item.end)}`;
+      const category=item.category||'sponsor';
+      segment.className = `das-preview-segment das-${item.previewState} das-category-${category}`;
+      const stateName = item.previewState === 'pending' ? '待提交' : item.previewState === 'candidate' ? '待确认' : '社区';
+      segment.title = `${stateName}${CATEGORY_LABELS[category]||'片段'} ${formatTime(item.start)}–${formatTime(item.end)}`;
       segment.setAttribute('aria-label', segment.title);
       segment.style.left = `${Math.max(0, item.start / video.duration * 100)}%`;
       segment.style.width = `${Math.max(0.08, (Math.min(video.duration, item.end) - Math.max(0, item.start)) / video.duration * 100)}%`;

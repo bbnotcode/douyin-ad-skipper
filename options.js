@@ -1,4 +1,5 @@
 const DEFAULT_COMMUNITY_API='https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
+const CATEGORY_LABELS={sponsor:'赞助/广告',selfpromo:'自我推广',interaction:'互动提醒'};
 const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, shortcutsEnabled:true, shortcutCreate:'Alt+KeyZ', shortcutCancel:'Alt+KeyX', shortcutSubmit:'Alt+Enter', skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, communityAutoSkipTrusted:true, communitySkipMode:'auto', communityClientId:'' };
 let state = { ...DEFAULTS };
 let capturingShortcut='';
@@ -65,7 +66,7 @@ function renderSegments() {
   $('#segmentList').innerHTML = groups.length ? groups.map(({videoId,segments}) => {
     const info = segments.find((item)=>item.title||item.author||item.url) || {};
     const url = info.url || `https://www.douyin.com/video/${videoId}`;
-    return `<article class="video-group"><header class="video-head"><div><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(info.title||`抖音作品 ${videoId}`)}</strong></a><span>${escapeHtml(info.author||'未记录作者')} · ID ${videoId}</span></div><em>${segments.length} 段</em></header>${segments.map((item)=>{const [statusClass,statusText]=segmentStatus(item);return `<div class="segment-row"><span class="time-range">${formatTime(item.start)} → ${formatTime(item.end)}</span><div class="segment-copy"><strong>广告片段 <i class="segment-status ${statusClass}">${statusText}</i></strong><span>${item.storageSource==='community'?'已保存在社区':item.previewed?'✓ 已预览':'修改或创建后需预览'} · ${item.createdAt?new Date(item.createdAt).toLocaleString('zh-CN'):'旧版片段'}</span></div><div class="segment-actions">${item.storageSource==='community'?'<button class="upload-button" disabled>云端片段</button>':`<button class="edit-button" data-video-id="${videoId}" data-index="${item.index}">编辑时间</button><button class="upload-button" data-video-id="${videoId}" data-index="${item.index}" ${isUploadReady(item)?'':'disabled'}>${isUploadReady(item)?'上传社区':'等待预览'}</button><button class="delete-button" data-video-id="${videoId}" data-index="${item.index}">删除草稿</button>`}</div></div>`}).join('')}</article>`;
+    return `<article class="video-group"><header class="video-head"><div><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(info.title||`抖音作品 ${videoId}`)}</strong></a><span>${escapeHtml(info.author||'未记录作者')} · ID ${videoId}</span></div><em>${segments.length} 段</em></header>${segments.map((item)=>{const [statusClass,statusText]=segmentStatus(item);const category=item.category||'sponsor';return `<div class="segment-row"><div><span class="time-range">${formatTime(item.start)} → ${formatTime(item.end)}</span>${item.storageSource==='community'?'':`<div class="nudge-controls"><button data-adjust="start" data-delta="-0.1" data-video-id="${videoId}" data-index="${item.index}">起点 −</button><button data-adjust="start" data-delta="0.1" data-video-id="${videoId}" data-index="${item.index}">起点 +</button><button data-adjust="end" data-delta="-0.1" data-video-id="${videoId}" data-index="${item.index}">终点 −</button><button data-adjust="end" data-delta="0.1" data-video-id="${videoId}" data-index="${item.index}">终点 +</button></div>`}</div><div class="segment-copy"><strong>${CATEGORY_LABELS[category]||'片段'} <i class="segment-status ${statusClass}">${statusText}</i></strong><span>${item.storageSource==='community'?'已保存在社区':item.previewed?'✓ 已预览':'修改或创建后需预览'} · ${item.createdAt?new Date(item.createdAt).toLocaleString('zh-CN'):'旧版片段'}</span></div><div class="segment-actions">${item.storageSource==='community'?'<button class="upload-button" disabled>云端片段</button>':`<select class="category-select" data-video-id="${videoId}" data-index="${item.index}"><option value="sponsor" ${category==='sponsor'?'selected':''}>赞助/广告</option><option value="selfpromo" ${category==='selfpromo'?'selected':''}>自我推广</option><option value="interaction" ${category==='interaction'?'selected':''}>互动提醒</option></select><button class="edit-button" data-video-id="${videoId}" data-index="${item.index}">编辑时间</button><button class="upload-button" data-video-id="${videoId}" data-index="${item.index}" ${isUploadReady(item)?'':'disabled'}>${isUploadReady(item)?'上传社区':'等待预览'}</button><button class="delete-button" data-video-id="${videoId}" data-index="${item.index}">删除草稿</button>`}</div></div>`}).join('')}</article>`;
   }).join('') : '<div class="panel empty">没有找到片段。</div>';
 }
 
@@ -127,6 +128,20 @@ async function editSegment(videoId,index) {
   state.localSegments=localSegments;await chrome.storage.local.set({localSegments});renderOverview();renderSegments();toast('时间已修改，请回到播放器重新预览');
 }
 
+async function updateLocalSegment(videoId,index,changes,message) {
+  const localSegments={...state.localSegments};const segments=[...(localSegments[videoId]||[])];const current=segments[index];if(!current)return;
+  const next={...current,...changes,previewed:false};
+  if(next.start<0||next.end<=next.start+0.2||next.end-next.start>600)return toast('调整后的时间范围无效');
+  segments[index]=next;segments.sort((a,b)=>a.start-b.start);localSegments[videoId]=segments;state.localSegments=localSegments;
+  await chrome.storage.local.set({localSegments});renderOverview();renderSegments();toast(message);
+}
+
+async function adjustSegment(videoId,index,field,delta) {
+  const current=state.localSegments?.[videoId]?.[index];if(!current)return;
+  const value=Math.round((Number(current[field])+delta)*10)/10;
+  await updateLocalSegment(videoId,index,{[field]:value},'已调整 0.1 秒，请重新预览');
+}
+
 async function ensureCommunityReady() {
   if (!state.communityEnabled || !state.communityApiBase) {
     toast('请先在“社区共享”中授权并连接 API');
@@ -154,7 +169,7 @@ async function uploadSegment(videoId,index) {
     const response=await fetch(`${new URL(state.communityApiBase).origin}/v1/segments`,{
       method:'POST',
       headers:{'Content-Type':'application/json','X-Client-ID':state.communityClientId},
-      body:JSON.stringify({videoId,start:Number(segment.start),end:Number(segment.end),category:'sponsor',clientRequestId:crypto.randomUUID()}),
+      body:JSON.stringify({videoId,start:Number(segment.start),end:Number(segment.end),category:segment.category||'sponsor',clientRequestId:crypto.randomUUID()}),
     });
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     await response.json();
@@ -267,9 +282,15 @@ $('#disconnectCommunity').addEventListener('click',async()=>{
 });
 $('#segmentSearch').addEventListener('input',renderSegments);
 $('#segmentList').addEventListener('click',async(event)=>{
+  const adjustButton=event.target.closest('[data-adjust]');if(adjustButton){await adjustSegment(adjustButton.dataset.videoId,Number(adjustButton.dataset.index),adjustButton.dataset.adjust,Number(adjustButton.dataset.delta));return}
   const editButton=event.target.closest('.edit-button');if(editButton){await editSegment(editButton.dataset.videoId,Number(editButton.dataset.index));return}
   const deleteButton=event.target.closest('.delete-button');if(deleteButton){deleteSegment(deleteButton.dataset.videoId,Number(deleteButton.dataset.index));return}
   const uploadButton=event.target.closest('.upload-button');if(uploadButton&&!uploadButton.disabled){uploadButton.disabled=true;uploadButton.textContent='上传中…';const ok=await uploadSegment(uploadButton.dataset.videoId,Number(uploadButton.dataset.index));renderOverview();renderSegments();toast(ok?'片段已上传社区':'上传失败，片段仍保留在本地')}
+});
+$('#segmentList').addEventListener('change',async(event)=>{
+  const select=event.target.closest('.category-select');if(!select||!CATEGORY_LABELS[select.value])return;
+  const videoId=select.dataset.videoId;const index=Number(select.dataset.index);if(!state.localSegments?.[videoId]?.[index])return;
+  await updateLocalSegment(videoId,index,{category:select.value},'片段分类已保存');
 });
 $('#uploadAllSegments').addEventListener('click',uploadAllPending);
 $('#exportData').addEventListener('click',exportData);

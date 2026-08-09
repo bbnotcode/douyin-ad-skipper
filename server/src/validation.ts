@@ -1,12 +1,13 @@
 export const VIDEO_ID_PATTERN = /^\d{10,24}$/;
 export const REPORT_REASONS = new Set(['wrong_video', 'wrong_time', 'not_ad', 'abuse', 'other']);
+export const SEGMENT_CATEGORIES = new Set(['sponsor', 'selfpromo', 'interaction']);
 
 export type SegmentInput = {
   videoId: string;
   start: number;
   end: number;
   duration?: number;
-  category: 'sponsor';
+  category: 'sponsor' | 'selfpromo' | 'interaction';
   clientRequestId: string;
 };
 
@@ -19,11 +20,11 @@ export function parseSegmentInput(value: unknown): SegmentInput | null {
   const duration = body.duration == null ? undefined : Number(body.duration);
   const category = body.category == null ? 'sponsor' : body.category;
   const clientRequestId = String(body.clientRequestId || '');
-  if (!VIDEO_ID_PATTERN.test(videoId) || category !== 'sponsor') return null;
+  if (!VIDEO_ID_PATTERN.test(videoId) || typeof category !== 'string' || !SEGMENT_CATEGORIES.has(category)) return null;
   if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end - start > 600) return null;
   if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0 || end > duration + 1)) return null;
   if (!/^[0-9a-f-]{16,64}$/i.test(clientRequestId)) return null;
-  return { videoId, start, end, duration, category: 'sponsor', clientRequestId };
+  return { videoId, start, end, duration, category: category as SegmentInput['category'], clientRequestId };
 }
 
 export function statusFromVotes(upvotes: number, downvotes: number): 'trusted' | 'disputed' {
