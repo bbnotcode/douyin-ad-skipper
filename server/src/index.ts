@@ -80,11 +80,27 @@ function segmentJson(row: SegmentRow) {
 
 async function getSegments(videoId: string, env: Env): Promise<Response> {
   if (!VIDEO_ID_PATTERN.test(videoId)) return json({ error: 'invalid_video_id' }, 400);
+  const videoHash = await sha256(videoId);
+  await env.DB.prepare('UPDATE segments SET video_hash = ? WHERE video_id = ? AND video_hash IS NULL')
+    .bind(videoHash, videoId).run();
   const result = await env.DB.prepare(`
     SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
     FROM segments WHERE video_id = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
   `).bind(videoId).all<SegmentRow>();
   return json({ videoId, segments: result.results.map(segmentJson) }, 200, { 'Cache-Control': 'public, max-age=60' });
+}
+
+async function getSegmentsByHash(videoHash: string, env: Env): Promise<Response> {
+  if (!/^[0-9a-f]{64}$/i.test(videoHash)) return json({ error: 'invalid_video_hash' }, 400);
+  const result = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    FROM segments WHERE video_hash = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
+  `).bind(videoHash.toLowerCase()).all<SegmentRow>();
+  const segments = result.results.map((row) => {
+    const { videoId: _videoId, ...segment } = segmentJson(row);
+    return segment;
+  });
+  return json({ segments }, 200, { 'Cache-Control': 'public, max-age=60' });
 }
 
 async function getMySegments(request: Request, env: Env): Promise<Response> {
@@ -155,10 +171,11 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
   `).bind(input.videoId, input.category, startMs, endMs).first<SegmentRow>();
   if (existing) return json({ segment: segmentJson(existing), duplicate: true });
   const id = crypto.randomUUID(), now = new Date().toISOString();
+  const videoHash = await sha256(input.videoId);
   await env.DB.prepare(`
-    INSERT INTO segments (id, video_id, start_ms, end_ms, duration_ms, category, status, submitter_hash, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'trusted', ?, ?, ?)
-  `).bind(id, input.videoId, startMs, endMs, input.duration == null ? null : Math.round(input.duration * 1000), input.category, identity, now, now).run();
+    INSERT INTO segments (id, video_id, video_hash, start_ms, end_ms, duration_ms, category, status, submitter_hash, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'trusted', ?, ?, ?)
+  `).bind(id, input.videoId, videoHash, startMs, endMs, input.duration == null ? null : Math.round(input.duration * 1000), input.category, identity, now, now).run();
   return json({ segment: { id, videoId: input.videoId, start: input.start, end: input.end, category: input.category, status: 'trusted', upvotes: 0, downvotes: 0, score: 0, createdAt: now } }, 201);
 }
 
@@ -212,9 +229,11 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url), path = url.pathname;
     try {
-      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 1 });
+      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 2 });
       const videoMatch = path.match(/^\/v1\/videos\/(\d+)\/segments$/);
       if (request.method === 'GET' && videoMatch) return getSegments(videoMatch[1], env);
+      const videoHashMatch = path.match(/^\/v1\/videos\/by-hash\/([0-9a-f]{64})\/segments$/i);
+      if (request.method === 'GET' && videoHashMatch) return getSegmentsByHash(videoHashMatch[1], env);
       if (request.method === 'GET' && path === '/v1/me/segments') return getMySegments(request, env);
       if (request.method === 'POST' && path === '/v1/segments') return submitSegment(request, env);
       const voteMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/votes$/i);

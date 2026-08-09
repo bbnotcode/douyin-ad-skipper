@@ -26,6 +26,14 @@ GET /v1/videos/{videoId}/segments
 }
 ```
 
+扩展正常播放查询使用隐私版本：
+
+```http
+GET /v1/videos/by-hash/{sha256(videoId)}/segments
+```
+
+原始作品 ID 查询仅保留用于旧客户端兼容和迁移。
+
 ## 提交片段
 
 ```http

@@ -163,6 +163,11 @@
     }
   }
 
+  async function sha256Hex(value) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
   async function loadCommunitySegments(video) {
     if (!settings.communityEnabled || settings.communitySkipMode === 'disabled') return;
     const videoId = extractVideoId(video);
@@ -174,7 +179,8 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4000);
     try {
-      const response = await fetch(`${apiBase}/v1/videos/${videoId}/segments`, {
+      const videoHash = await sha256Hex(videoId);
+      const response = await fetch(`${apiBase}/v1/videos/by-hash/${videoHash}/segments`, {
         headers: { Accept: 'application/json' },
         signal: controller.signal,
       });
