@@ -187,6 +187,7 @@
       const videoHash = await sha256Hex(videoId);
       const response = await fetch(`${apiBase}/v1/videos/by-hash/${videoHash}/segments`, {
         headers: { Accept: 'application/json' },
+        cache: 'no-store',
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -449,7 +450,7 @@
     document.querySelectorAll('.das-submission-menu').forEach((menu) => menu.remove());
   }
 
-  function openSubmissionMenu(video, videoId) {
+  function openSubmissionMenu(video, videoId, expandedSegmentId = null) {
     const player = getVideoPlayer(video);
     if (!player) return;
     const existing = player.querySelector('.das-submission-menu');
@@ -463,9 +464,26 @@
     const menu = document.createElement('section');
     menu.className = 'das-submission-menu';
     const allPreviewed = pending.every((item) => item.previewed === true);
-    menu.innerHTML = `<header><strong>提交广告片段</strong><button type="button" data-menu-action="close" aria-label="关闭">×</button></header>
-      <p>提交前请逐段预览，确认开始和结束时间准确。</p>
-      <ol>${pending.map((item,index) => `<li><span>${formatTime(item.start)} – ${formatTime(item.end)}<small>${item.previewed?'✓ 已预览':'尚未预览'}</small></span><select data-menu-action="category" data-preview-index="${index}" aria-label="片段分类"><option value="sponsor" ${(item.category||'sponsor')==='sponsor'?'selected':''}>赞助/广告</option><option value="selfpromo" ${item.category==='selfpromo'?'selected':''}>自我推广</option><option value="interaction" ${item.category==='interaction'?'selected':''}>互动提醒</option></select><button type="button" data-menu-action="preview" data-preview-index="${index}">${item.previewed?'重新预览':'预览'}</button></li>`).join('')}</ol>
+    menu.innerHTML = `<header><div><strong>提交社区片段</strong><small>${pending.length} 个待提交片段</small></div><button type="button" data-menu-action="close" aria-label="关闭">×</button></header>
+      <p>先微调时间并完整预览，确认片段边界准确后再提交。</p>
+      <ol>${pending.map((item,index) => `<li>
+        <div class="das-segment-summary"><span>${formatTime(item.start)} – ${formatTime(item.end)}</span><small>${item.previewed?'✓ 已预览':'尚未预览'}</small></div>
+        <div class="das-segment-category"><select data-menu-action="category" data-preview-index="${index}" aria-label="片段分类"><option value="sponsor" ${(item.category||'sponsor')==='sponsor'?'selected':''}>赞助/广告</option><option value="selfpromo" ${item.category==='selfpromo'?'selected':''}>自我推广</option><option value="interaction" ${item.category==='interaction'?'selected':''}>互动提醒</option></select></div>
+        <div class="das-segment-primary-actions">
+          <button type="button" data-menu-action="preview" data-preview-index="${index}"><b>▶</b><span>${item.previewed?'重新预览':'预览片段'}</span></button>
+          <button type="button" data-menu-action="seek-boundary" data-field="start" data-preview-index="${index}"><b>↤</b><span>片段开头</span></button>
+          <button type="button" data-menu-action="seek-boundary" data-field="end" data-preview-index="${index}"><b>↦</b><span>片段结尾</span></button>
+        </div>
+        <div class="das-segment-secondary-actions">
+          <button type="button" class="${expandedSegmentId===item.createdAt?'das-active':''}" data-menu-action="toggle-editor" data-preview-index="${index}" aria-expanded="${expandedSegmentId===item.createdAt?'true':'false'}"><span>精确编辑</span><b>⌄</b></button>
+          <button type="button" data-menu-action="delete-segment" data-preview-index="${index}">删除此片段</button>
+        </div>
+        <div class="das-segment-editor" data-editor-index="${index}" aria-label="片段时间微调" ${expandedSegmentId===item.createdAt?'':'hidden'}>
+          <span>起点</span><button type="button" data-menu-action="adjust" data-field="start" data-delta="-0.1" data-preview-index="${index}" aria-label="起点提前 0.1 秒">−</button><button type="button" data-menu-action="seek-boundary" data-field="start" data-preview-index="${index}" title="跳到起点">${formatTime(item.start)}</button><button type="button" data-menu-action="adjust" data-field="start" data-delta="0.1" data-preview-index="${index}" aria-label="起点延后 0.1 秒">＋</button>
+          <span>终点</span><button type="button" data-menu-action="adjust" data-field="end" data-delta="-0.1" data-preview-index="${index}" aria-label="终点提前 0.1 秒">−</button><button type="button" data-menu-action="seek-boundary" data-field="end" data-preview-index="${index}" title="跳到终点">${formatTime(item.end)}</button><button type="button" data-menu-action="adjust" data-field="end" data-delta="0.1" data-preview-index="${index}" aria-label="终点延后 0.1 秒">＋</button>
+          <div class="das-frame-controls"><button type="button" data-menu-action="frame-step" data-delta="-1"><b>‹</b><span>上一帧</span><kbd>,</kbd></button><button type="button" data-menu-action="frame-step" data-delta="1"><span>下一帧</span><kbd>.</kbd><b>›</b></button></div>
+        </div>
+      </li>`).join('')}</ol>
       <div class="das-submission-actions"><button type="button" data-menu-action="submit" ${allPreviewed?'':'disabled'}>${allPreviewed?'提交到社区':'请先预览全部'}</button><button type="button" data-menu-action="keep">暂时保留本地</button></div>`;
     menu.addEventListener('pointerdown', (event) => event.stopPropagation());
     menu.addEventListener('click', async (event) => {
@@ -473,6 +491,32 @@
       const action = event.target.closest('button')?.dataset.menuAction;
       if (action === 'close' || action === 'keep') closeSubmissionMenu();
       if (action === 'preview') await previewPendingSegment(video, videoId, pending[Number(event.target.closest('button').dataset.previewIndex)]);
+      if (action === 'toggle-editor') {
+        const button = event.target.closest('button');
+        const editor = menu.querySelector(`[data-editor-index="${button.dataset.previewIndex}"]`);
+        if (editor) {
+          editor.hidden = !editor.hidden;
+          button.setAttribute('aria-expanded', String(!editor.hidden));
+          button.classList.toggle('das-active', !editor.hidden);
+        }
+      }
+      if (action === 'seek-boundary') {
+        const button = event.target.closest('button');
+        const target = pending[Number(button.dataset.previewIndex)];
+        if (target) await inspectSegmentBoundary(video, videoId, target, button.dataset.field);
+      }
+      if (action === 'adjust') {
+        const button = event.target.closest('button');
+        await adjustPendingSegment(video, videoId, pending[Number(button.dataset.previewIndex)], button.dataset.field, Number(button.dataset.delta));
+      }
+      if (action === 'frame-step') {
+        const button = event.target.closest('button');
+        stepVideoFrame(video, Number(button.dataset.delta));
+      }
+      if (action === 'delete-segment') {
+        const button = event.target.closest('button');
+        await deletePendingSegment(video, videoId, pending[Number(button.dataset.previewIndex)]);
+      }
       if (action === 'submit') await submitPendingSegments(video, videoId, menu);
     });
     menu.addEventListener('change', async (event) => {
@@ -482,7 +526,91 @@
       if(stored)stored.category=select.value;target.category=select.value;
       settings.localSegments={...(settings.localSegments||{}),[videoId]:segments};await chrome.storage.local.set({localSegments:settings.localSegments});renderPreviewBar();
     });
+    menu.addEventListener('keydown', (event) => {
+      if (event.key !== ',' && event.key !== '.') return;
+      event.preventDefault();
+      stepVideoFrame(video, event.key === ',' ? -1 : 1);
+    });
+    menu.tabIndex = -1;
     player.appendChild(menu);
+    menu.focus({ preventScroll: true });
+  }
+
+  function stepVideoFrame(video, direction) {
+    if (!video || !Number.isFinite(direction) || !direction) return;
+    video.pause();
+    video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + Math.sign(direction) / 30));
+  }
+
+  async function inspectSegmentBoundary(video, videoId, segment, field) {
+    if (!segment || !['start', 'end'].includes(field)) return;
+    const key = `${videoId}:${segment.start}:${segment.end}`;
+    lastSegmentSkipKey = '';
+    if (field === 'start') {
+      // 校准起点时允许用户连续观看整段，不触发本地或社区自动跳过。
+      const inspectMs = Math.max(5000, (segment.end - segment.start + 3) * 1000);
+      skipSuppressedUntil.set(key, Date.now() + inspectMs);
+      video.currentTime = Math.max(0, segment.start);
+      try { await video.play(); } catch {}
+      showToast(`从片段开头播放 · ${formatTime(segment.start)}`);
+      return;
+    }
+    skipSuppressedUntil.set(key, Date.now() + 5000);
+    video.pause();
+    video.currentTime = Math.min(segment.end, video.duration || segment.end);
+    showToast(`已定位片段结尾 · ${formatTime(segment.end)}`);
+  }
+
+  async function deletePendingSegment(video, videoId, segment) {
+    if (!segment) return;
+    const segments = [...(settings.localSegments?.[videoId] || [])];
+    const index = segments.findIndex((item) => item.createdAt === segment.createdAt);
+    if (index < 0) return;
+    const [removed] = segments.splice(index, 1);
+    const localSegments = { ...(settings.localSegments || {}) };
+    if (segments.length) localSegments[videoId] = segments;
+    else delete localSegments[videoId];
+    settings.localSegments = localSegments;
+    await chrome.storage.local.set({ localSegments });
+    closeSubmissionMenu();
+    if (segments.some((item) => (item.submissionStatus || 'pending') === 'pending')) openSubmissionMenu(video, videoId);
+    renderPlayerControls();
+    renderPreviewBar();
+    showToast(`已删除片段 · ${formatTime(removed.start)}–${formatTime(removed.end)}`);
+  }
+
+  async function adjustPendingSegment(video, videoId, segment, field, delta) {
+    if (!segment || !['start', 'end'].includes(field) || !Number.isFinite(delta)) return;
+    const segments = [...(settings.localSegments?.[videoId] || [])];
+    const target = segments.find((item) => item.createdAt === segment.createdAt);
+    if (!target) return;
+    const nextValue = Math.round((Number(target[field]) + delta) * 10) / 10;
+    const nextStart = field === 'start' ? nextValue : Number(target.start);
+    const nextEnd = field === 'end' ? nextValue : Number(target.end);
+    if (nextStart < 0 || nextEnd <= nextStart + 0.2 || nextEnd > (video.duration || Infinity)) {
+      showToast('调整后的片段范围无效');
+      return;
+    }
+    target[field] = nextValue;
+    target.previewed = false;
+    settings.localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
+    await chrome.storage.local.set({ localSegments: settings.localSegments });
+    const menu = getVideoPlayer(video)?.querySelector('.das-submission-menu');
+    const pending = currentSegments(video).filter((item) => (item.submissionStatus || 'pending') === 'pending');
+    const pendingIndex = pending.findIndex((item) => item.createdAt === target.createdAt);
+    if (menu && pendingIndex >= 0) {
+      const editor = menu.querySelector(`[data-editor-index="${pendingIndex}"]`);
+      const summary = editor?.closest('li')?.querySelector('.das-segment-summary');
+      const times = editor?.querySelectorAll('[data-menu-action="seek-boundary"]');
+      if (summary) summary.innerHTML = `<span>${formatTime(target.start)} – ${formatTime(target.end)}</span><small>尚未预览</small>`;
+      if (times?.[0]) times[0].textContent = formatTime(target.start);
+      if (times?.[1]) times[1].textContent = formatTime(target.end);
+      const submitButton = menu.querySelector('[data-menu-action="submit"]');
+      if (submitButton) { submitButton.disabled = true; submitButton.textContent = '请先预览全部'; }
+    }
+    video.currentTime = nextValue;
+    renderPreviewBar();
+    showToast(`${field === 'start' ? '起点' : '终点'}已调整 0.1 秒，请重新预览`);
   }
 
   async function previewPendingSegment(video, videoId, segment) {

@@ -118,7 +118,7 @@ async function getSegments(videoId: string, env: Env): Promise<Response> {
     SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
     FROM segments WHERE video_id = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
   `).bind(videoId).all<SegmentRow>();
-  return json({ videoId, segments: result.results.map(segmentJson) }, 200, { 'Cache-Control': 'public, max-age=60' });
+  return json({ videoId, segments: result.results.map(segmentJson) });
 }
 
 async function getSegmentsByHash(videoHash: string, env: Env): Promise<Response> {
@@ -131,7 +131,7 @@ async function getSegmentsByHash(videoHash: string, env: Env): Promise<Response>
     const { videoId: _videoId, ...segment } = segmentJson(row);
     return segment;
   });
-  return json({ segments }, 200, { 'Cache-Control': 'public, max-age=60' });
+  return json({ segments });
 }
 
 async function getMySegments(request: Request, env: Env): Promise<Response> {
