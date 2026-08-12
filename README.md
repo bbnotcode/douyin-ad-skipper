@@ -25,6 +25,8 @@
 5. 选择本仓库根目录。
 6. 打开或刷新 `https://www.douyin.com/`。
 
+也可以从 GitHub Releases 下载自动生成的 Chrome ZIP，解压后按上述方式加载。Release 标签必须与 `manifest.json` 版本一致，例如版本 `0.6.2` 使用标签 `v0.6.2`。
+
 ## 创建片段
 
 播放器底部清晰度按钮左侧会显示片段标记图标：
@@ -82,6 +84,8 @@
 ## 参与贡献
 
 欢迎提交问题、页面适配、交互改进和共享服务设计。开始前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [SECURITY.md](SECURITY.md)。
+
+每次推送和 Pull Request 都会运行扩展语法、清单约束、Worker 测试和 TypeScript 检查；推送 `v版本号` 标签后会自动生成不含服务器配置的 Chrome ZIP，并发布到 GitHub Releases。
 
 ## 许可证
 
