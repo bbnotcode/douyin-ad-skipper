@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "抖音广告跳过",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "跳过抖音网页版广告，并与社区共享手动标记的广告片段。",
   "icons": {
     "16": "icons/icon-16.png",

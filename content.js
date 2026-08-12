@@ -8,8 +8,6 @@
     skipLocalSegments: true,
     communityEnabled: true,
     communityApiBase: DEFAULT_COMMUNITY_API,
-    communityAutoSkipTrusted: true,
-    communitySkipMode: 'auto',
     categoryModeSponsor: 'auto',
     categoryModeSelfpromo: 'manual',
     categoryModeInteraction: 'manual',
@@ -156,7 +154,6 @@
   }
 
   function communitySegments(video) {
-    if (settings.communitySkipMode === 'disabled') return [];
     const id = extractVideoId(video);
     const cached = id && communityCache.get(id);
     return cached?.segments || [];
@@ -177,7 +174,7 @@
   }
 
   async function loadCommunitySegments(video) {
-    if (!settings.communityEnabled || settings.communitySkipMode === 'disabled') return;
+    if (!settings.communityEnabled) return;
     const videoId = extractVideoId(video);
     const apiBase = normalizedApiBase();
     if (!videoId || !apiBase) return;
@@ -795,9 +792,15 @@
   }
 
   (async () => {
-    const stored = await chrome.storage.local.get(DEFAULTS);
+    const stored = await chrome.storage.local.get(null);
     settings = { ...DEFAULTS, ...stored };
-    if (!stored.communitySkipMode) settings.communitySkipMode = stored.communityAutoSkipTrusted === false ? 'manual' : 'auto';
+    if (!Object.hasOwn(stored, 'categoryModeSponsor')) {
+      const legacyMode = ['auto', 'manual', 'disabled'].includes(stored.communitySkipMode) ? stored.communitySkipMode : 'auto';
+      const categoryModes = { categoryModeSponsor: legacyMode, categoryModeSelfpromo: legacyMode, categoryModeInteraction: legacyMode };
+      settings = { ...settings, ...categoryModes };
+      await chrome.storage.local.set(categoryModes);
+    }
+    await chrome.storage.local.remove(['communitySkipMode', 'communityAutoSkipTrusted']);
     if (!settings.communityApiBase || /^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
       settings.communityApiBase = DEFAULT_COMMUNITY_API;
       settings.communityEnabled = true;

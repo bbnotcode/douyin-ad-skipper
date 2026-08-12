@@ -1,6 +1,6 @@
 const DEFAULT_COMMUNITY_API='https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
 const CATEGORY_LABELS={sponsor:'赞助/广告',selfpromo:'自我推广',interaction:'互动提醒'};
-const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, shortcutsEnabled:true, shortcutCreate:'Alt+KeyZ', shortcutCancel:'Alt+KeyX', shortcutSubmit:'Alt+Enter', skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, communityAutoSkipTrusted:true, communitySkipMode:'auto', categoryModeSponsor:'auto', categoryModeSelfpromo:'manual', categoryModeInteraction:'manual', communityClientId:'' };
+const DEFAULTS = { enabled:true, skipLabeledAds:true, skipLocalSegments:true, showToast:true, debug:false, shortcutsEnabled:true, shortcutCreate:'Alt+KeyZ', shortcutCancel:'Alt+KeyX', shortcutSubmit:'Alt+Enter', skippedCount:0, localSegments:{}, communityEnabled:true, communityApiBase:DEFAULT_COMMUNITY_API, categoryModeSponsor:'auto', categoryModeSelfpromo:'manual', categoryModeInteraction:'manual', communityClientId:'' };
 let state = { ...DEFAULTS };
 let capturingShortcut='';
 let communitySegments = [];
@@ -206,10 +206,30 @@ function exportData() {
 
 async function importData(file) {
   try {
-    const payload=JSON.parse(await file.text()); if(payload.format!=='douyin-ad-skipper-backup'||!payload.localSegments||typeof payload.localSegments!=='object') throw new Error('invalid');
-    const merged={...state.localSegments}; for(const [id,segments] of Object.entries(payload.localSegments)){if(Array.isArray(segments)) merged[id]=[...(merged[id]||[]),...segments].sort((a,b)=>a.start-b.start)}
-    const update={...payload.settings,localSegments:merged}; await chrome.storage.local.set(update); state={...state,...update}; syncSettings(); renderOverview(); renderSegments(); toast('备份已导入');
-  } catch { toast('无法导入：文件格式不正确'); }
+    if(file.size>2*1024*1024)throw new Error('too_large');
+    const payload=JSON.parse(await file.text());
+    if(payload.format!=='douyin-ad-skipper-backup'||!payload.localSegments||typeof payload.localSegments!=='object'||Array.isArray(payload.localSegments))throw new Error('invalid');
+    const entries=Object.entries(payload.localSegments);if(entries.length>1000)throw new Error('too_many');
+    const merged={...state.localSegments};let total=0;
+    for(const [id,segments] of entries){
+      if(!/^\d{10,24}$/.test(id)||!Array.isArray(segments))throw new Error('invalid_segment');
+      const valid=segments.map((item)=>normalizeImportedSegment(item,id));total+=valid.length;if(total>10000)throw new Error('too_many');
+      merged[id]=[...(merged[id]||[]),...valid].sort((a,b)=>a.start-b.start);
+    }
+    const allowedSettings=['enabled','skipLabeledAds','skipLocalSegments','showToast','debug','shortcutsEnabled','shortcutCreate','shortcutCancel','shortcutSubmit','categoryModeSponsor','categoryModeSelfpromo','categoryModeInteraction'];
+    const importedSettings=Object.fromEntries(Object.entries(payload.settings||{}).filter(([key])=>allowedSettings.includes(key)));
+    for(const key of ['enabled','skipLabeledAds','skipLocalSegments','showToast','debug','shortcutsEnabled'])if(key in importedSettings)importedSettings[key]=importedSettings[key]===true;
+    for(const key of ['categoryModeSponsor','categoryModeSelfpromo','categoryModeInteraction'])if(key in importedSettings&&!['auto','manual','disabled'].includes(importedSettings[key]))delete importedSettings[key];
+    for(const key of ['shortcutCreate','shortcutCancel','shortcutSubmit'])if(key in importedSettings&&!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:Key[A-Z]|Digit\d|Enter|Space|Arrow(?:Up|Down|Left|Right))$/.test(String(importedSettings[key])))delete importedSettings[key];
+    const update={...importedSettings,localSegments:merged};await chrome.storage.local.set(update);state={...state,...update};syncSettings();renderOverview();renderSegments();toast('备份已导入');
+  } catch { toast('无法导入：文件格式不正确或数据过大'); }
+}
+
+function normalizeImportedSegment(item,videoId){
+  if(!item||typeof item!=='object')throw new Error('invalid_segment');
+  const start=Number(item.start),end=Number(item.end),category=item.category||'sponsor';
+  if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||end-start>600||!CATEGORY_LABELS[category])throw new Error('invalid_segment');
+  return {start,end,category,createdAt:Number.isFinite(Number(item.createdAt))?Number(item.createdAt):Date.now(),submissionStatus:item.submissionStatus==='submitted'?'submitted':'pending',previewed:item.previewed===true,title:String(item.title||`抖音作品 ${videoId}`).slice(0,300),author:String(item.author||'').slice(0,100),url:`https://www.douyin.com/video/${videoId}`};
 }
 
 function syncSettings() {
@@ -298,5 +318,5 @@ $('#importData').addEventListener('click',()=>$('#importFile').click());
 $('#importFile').addEventListener('change',(event)=>{if(event.target.files[0])importData(event.target.files[0]);event.target.value=''});
 $('#clearSegments').addEventListener('click',async()=>{if(confirm('确定清空所有本地片段吗？此操作无法撤销。')){state.localSegments={};await chrome.storage.local.set({localSegments:{}});renderOverview();renderSegments();toast('本地片段已清空')}});
 
-(async()=>{const stored=await chrome.storage.local.get(DEFAULTS);state={...DEFAULTS,...stored};if(!state.communityApiBase||/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}state.communityClientId=await getContributorId();$('#extensionVersion').textContent=`版本 ${chrome.runtime.getManifest().version}`;syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');await fetchMyContributions()})();
+(async()=>{const stored=await chrome.storage.local.get(null);state={...DEFAULTS,...stored};if(!Object.hasOwn(stored,'categoryModeSponsor')){const legacyMode=['auto','manual','disabled'].includes(stored.communitySkipMode)?stored.communitySkipMode:'auto';const categoryModes={categoryModeSponsor:legacyMode,categoryModeSelfpromo:legacyMode,categoryModeInteraction:legacyMode};state={...state,...categoryModes};await chrome.storage.local.set(categoryModes)}await chrome.storage.local.remove(['communitySkipMode','communityAutoSkipTrusted']);if(!state.communityApiBase||/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(state.communityApiBase)){state.communityApiBase=DEFAULT_COMMUNITY_API;state.communityEnabled=true;await chrome.storage.local.set({communityApiBase:DEFAULT_COMMUNITY_API,communityEnabled:true})}state.communityClientId=await getContributorId();$('#extensionVersion').textContent=`版本 ${chrome.runtime.getManifest().version}`;syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');await fetchMyContributions()})();
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;for(const [key,change] of Object.entries(changes))state[key]=change.newValue;renderOverview()});

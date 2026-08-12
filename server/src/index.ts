@@ -15,7 +15,10 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, X-Client-ID',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Max-Age': '86400',
+  'X-Content-Type-Options': 'nosniff',
 };
+const MAX_JSON_BODY_BYTES = 8 * 1024;
+const BODY_TOO_LARGE = Symbol('body_too_large');
 
 function json(data: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return Response.json(data, { status, headers: { ...CORS, 'Cache-Control': 'no-store', ...extra } });
@@ -23,7 +26,15 @@ function json(data: unknown, status = 200, extra: Record<string, string> = {}): 
 
 async function bodyJson(request: Request): Promise<unknown> {
   if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) return null;
-  try { return await request.json(); } catch { return null; }
+  const declaredSize = Number(request.headers.get('content-length') || 0);
+  if (declaredSize > MAX_JSON_BODY_BYTES) return BODY_TOO_LARGE;
+  try {
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength > MAX_JSON_BODY_BYTES) return BODY_TOO_LARGE;
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
 }
 
 async function sha256(value: string): Promise<string> {
@@ -49,6 +60,20 @@ async function rateIdentityHash(request: Request, env: Env): Promise<string | nu
   return sha256(`${env.CLIENT_HASH_SALT}:rate:${contributor}:${ip}`);
 }
 
+async function ipRateIdentityHash(request: Request, env: Env): Promise<string | null> {
+  if (!env.CLIENT_HASH_SALT) return null;
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  return sha256(`${env.CLIENT_HASH_SALT}:rate-ip:${ip}`);
+}
+
+async function allowedWriteRate(request: Request, env: Env, action: string, identityLimit: number, ipLimit: number): Promise<boolean> {
+  const identity = await rateIdentityHash(request, env);
+  const ipIdentity = await ipRateIdentityHash(request, env);
+  return Boolean(identity && ipIdentity &&
+    await withinRateLimit(env, identity, action, identityLimit) &&
+    await withinRateLimit(env, ipIdentity, `${action}:ip`, ipLimit));
+}
+
 async function migrateLegacyIdentity(request: Request, env: Env, stableHash: string): Promise<void> {
   const clientId = clientIdFrom(request);
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
@@ -66,6 +91,12 @@ async function withinRateLimit(env: Env, identity: string, action: string, limit
     ON CONFLICT(identity_hash, action, bucket) DO UPDATE SET count = count + 1
     RETURNING count
   `).bind(identity, action, bucket).first<{ count: number }>();
+  const sample = new Uint8Array(1);
+  crypto.getRandomValues(sample);
+  if (sample[0] === 0) {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().slice(0, 13);
+    await env.DB.prepare('DELETE FROM rate_limits WHERE bucket < ?').bind(cutoff).run();
+  }
   return Boolean(row && row.count <= limit);
 }
 
@@ -137,8 +168,7 @@ async function recordSegmentSkip(request: Request, env: Env, segmentId: string):
   const viewer = await contributorHash(request, env);
   if (viewer === null) return json({ error: 'writes_not_configured' }, 503);
   if (!viewer) return json({ error: 'invalid_client_id' }, 400);
-  const rateIdentity = await rateIdentityHash(request, env);
-  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'skip', 300)) return json({ error: 'rate_limited' }, 429);
+  if (!await allowedWriteRate(request, env, 'skip', 300, 2000)) return json({ error: 'rate_limited' }, 429);
   const segment = await env.DB.prepare(`
     SELECT start_ms, end_ms, submitter_hash FROM segments
     WHERE id = ? AND status = 'trusted'
@@ -158,10 +188,11 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
   const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  const rateIdentity = await rateIdentityHash(request, env);
-  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'submit', 20)) return json({ error: 'rate_limited' }, 429);
+  if (!await allowedWriteRate(request, env, 'submit', 20, 100)) return json({ error: 'rate_limited' }, 429);
   await migrateLegacyIdentity(request, env, identity);
-  const input = parseSegmentInput(await bodyJson(request));
+  const body = await bodyJson(request);
+  if (body === BODY_TOO_LARGE) return json({ error: 'payload_too_large' }, 413);
+  const input = parseSegmentInput(body);
   if (!input) return json({ error: 'invalid_segment' }, 400);
   const startMs = Math.round(input.start * 1000), endMs = Math.round(input.end * 1000);
   const existing = await env.DB.prepare(`
@@ -183,13 +214,14 @@ async function vote(request: Request, env: Env, segmentId: string): Promise<Resp
   const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  const rateIdentity = await rateIdentityHash(request, env);
-  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'vote', 60)) return json({ error: 'rate_limited' }, 429);
-  const body = await bodyJson(request) as { vote?: unknown } | null;
+  if (!await allowedWriteRate(request, env, 'vote', 60, 300)) return json({ error: 'rate_limited' }, 429);
+  const body = await bodyJson(request) as { vote?: unknown } | null | typeof BODY_TOO_LARGE;
+  if (body === BODY_TOO_LARGE) return json({ error: 'payload_too_large' }, 413);
   const value = Number(body?.vote);
   if (value !== 1 && value !== -1) return json({ error: 'invalid_vote' }, 400);
-  const exists = await env.DB.prepare('SELECT id FROM segments WHERE id = ?').bind(segmentId).first();
+  const exists = await env.DB.prepare('SELECT id, submitter_hash FROM segments WHERE id = ?').bind(segmentId).first<{id:string;submitter_hash:string}>();
   if (!exists) return json({ error: 'segment_not_found' }, 404);
+  if (exists.submitter_hash === identity) return json({ error: 'cannot_vote_own_segment' }, 403);
   const now = new Date().toISOString();
   await env.DB.prepare(`INSERT INTO votes (segment_id, voter_hash, vote, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(segment_id, voter_hash) DO UPDATE SET vote = excluded.vote, updated_at = excluded.updated_at`
@@ -209,13 +241,14 @@ async function report(request: Request, env: Env, segmentId: string): Promise<Re
   const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  const rateIdentity = await rateIdentityHash(request, env);
-  if (!rateIdentity || !await withinRateLimit(env, rateIdentity, 'report', 10)) return json({ error: 'rate_limited' }, 429);
-  const body = await bodyJson(request) as { reason?: unknown } | null;
+  if (!await allowedWriteRate(request, env, 'report', 10, 50)) return json({ error: 'rate_limited' }, 429);
+  const body = await bodyJson(request) as { reason?: unknown } | null | typeof BODY_TOO_LARGE;
+  if (body === BODY_TOO_LARGE) return json({ error: 'payload_too_large' }, 413);
   const reason = String(body?.reason || '');
   if (!REPORT_REASONS.has(reason)) return json({ error: 'invalid_reason' }, 400);
-  const exists = await env.DB.prepare('SELECT id FROM segments WHERE id = ?').bind(segmentId).first();
+  const exists = await env.DB.prepare('SELECT id, submitter_hash FROM segments WHERE id = ?').bind(segmentId).first<{id:string;submitter_hash:string}>();
   if (!exists) return json({ error: 'segment_not_found' }, 404);
+  if (exists.submitter_hash === identity) return json({ error: 'cannot_report_own_segment' }, 403);
   await env.DB.prepare(`INSERT INTO reports (segment_id, reporter_hash, reason, created_at) VALUES (?, ?, ?, ?)
     ON CONFLICT(segment_id, reporter_hash) DO UPDATE SET reason = excluded.reason`
   ).bind(segmentId, identity, reason, new Date().toISOString()).run();
