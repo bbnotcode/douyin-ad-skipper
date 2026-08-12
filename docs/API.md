@@ -1,6 +1,6 @@
 # 社区共享 API 草案
 
-本文档用于讨论，不代表已部署服务。
+本文档描述当前公共服务接口。
 
 ## 查询片段
 
@@ -26,6 +26,14 @@ GET /v1/videos/{videoId}/segments
 }
 ```
 
+扩展正常播放查询使用隐私版本：
+
+```http
+GET /v1/videos/by-hash/{sha256(videoId)}/segments
+```
+
+原始作品 ID 查询仅保留用于旧客户端兼容和迁移。
+
 ## 提交片段
 
 ```http
@@ -45,6 +53,30 @@ Content-Type: application/json
 ```
 
 服务端必须校验数值范围、片段长度、视频时长、重复请求和提交速率。
+
+## 我的社区片段
+
+```http
+GET /v1/me/segments
+X-Client-ID: 匿名贡献者 UUID
+```
+
+返回该匿名贡献者已提交的片段，以及 `submittedCount` 和 `contributedSeconds`。服务端只使用 `X-Client-ID` 的加盐哈希查询，不保存原始值。
+
+统计中还包含：
+
+- `skipCount`：这些片段实际被其他匿名用户跳过的次数；
+- `helpedPeople`：去重后的匿名用户数；
+- `secondsSaved`：实际累计节省秒数。
+
+## 记录一次有效跳过
+
+```http
+POST /v1/segments/{segmentId}/skips
+X-Client-ID: 匿名贡献者 UUID
+```
+
+同一匿名用户对同一片段每天最多计入一次，提交者自己跳过自己的片段不计入。
 
 ## 投票
 

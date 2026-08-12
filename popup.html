@@ -10,11 +10,11 @@
   <main>
     <header>
       <span class="mark">跳</span>
-      <div><h1>抖音广告跳过</h1><p>整条广告 + 本地片段标记</p></div>
+      <div><h1>抖音广告跳过</h1><p>整条广告 + 社区片段</p></div>
     </header>
 
     <label class="setting primary">
-      <span><strong>自动跳过</strong><small>整条广告与本地标记片段</small></span>
+      <span><strong>自动跳过</strong><small>整条广告、草稿与社区片段</small></span>
       <input id="enabled" type="checkbox"><i></i>
     </label>
     <label class="setting">
@@ -28,13 +28,13 @@
 
     <section class="stats-grid">
       <div><strong id="count">0</strong><span>累计跳过</span></div>
-      <div><strong id="segmentCount">0</strong><span>本地片段</span></div>
+      <div><strong id="segmentCount">0</strong><span>本地草稿</span></div>
     </section>
     <section class="quick-actions">
       <button id="openSegments"><span>≡</span>片段管理</button>
       <button id="openOptions"><span>⚙</span>完整设置</button>
     </section>
-    <p class="note">这是本地测试版，不上传浏览记录。修改开关后立即生效。</p>
+    <p class="note">默认连接公共社区 API，只查询当前作品，不上传完整浏览记录。</p>
   </main>
   <script src="popup.js"></script>
 </body>

@@ -15,7 +15,10 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, X-Client-ID',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Max-Age': '86400',
+  'X-Content-Type-Options': 'nosniff',
 };
+const MAX_JSON_BODY_BYTES = 8 * 1024;
+const BODY_TOO_LARGE = Symbol('body_too_large');
 
 function json(data: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return Response.json(data, { status, headers: { ...CORS, 'Cache-Control': 'no-store', ...extra } });
@@ -23,7 +26,15 @@ function json(data: unknown, status = 200, extra: Record<string, string> = {}): 
 
 async function bodyJson(request: Request): Promise<unknown> {
   if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) return null;
-  try { return await request.json(); } catch { return null; }
+  const declaredSize = Number(request.headers.get('content-length') || 0);
+  if (declaredSize > MAX_JSON_BODY_BYTES) return BODY_TOO_LARGE;
+  try {
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength > MAX_JSON_BODY_BYTES) return BODY_TOO_LARGE;
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
 }
 
 async function sha256(value: string): Promise<string> {
@@ -31,12 +42,46 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function identityHash(request: Request, env: Env, requireClient = true): Promise<string | null> {
+function clientIdFrom(request: Request): string {
+  return request.headers.get('X-Client-ID') || '';
+}
+
+async function contributorHash(request: Request, env: Env): Promise<string | null> {
   if (!env.CLIENT_HASH_SALT) return null;
-  const clientId = request.headers.get('X-Client-ID') || '';
-  if (requireClient && !/^[0-9a-f-]{16,64}$/i.test(clientId)) return '';
+  const clientId = clientIdFrom(request);
+  if (!/^[0-9a-f-]{16,64}$/i.test(clientId)) return '';
+  return sha256(`${env.CLIENT_HASH_SALT}:contributor:${clientId}`);
+}
+
+async function rateIdentityHash(request: Request, env: Env): Promise<string | null> {
+  const contributor = await contributorHash(request, env);
+  if (!contributor) return contributor;
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
-  return sha256(`${env.CLIENT_HASH_SALT}:${clientId}:${ip}`);
+  return sha256(`${env.CLIENT_HASH_SALT}:rate:${contributor}:${ip}`);
+}
+
+async function ipRateIdentityHash(request: Request, env: Env): Promise<string | null> {
+  if (!env.CLIENT_HASH_SALT) return null;
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  return sha256(`${env.CLIENT_HASH_SALT}:rate-ip:${ip}`);
+}
+
+async function allowedWriteRate(request: Request, env: Env, action: string, identityLimit: number, ipLimit: number): Promise<boolean> {
+  const identity = await rateIdentityHash(request, env);
+  const ipIdentity = await ipRateIdentityHash(request, env);
+  return Boolean(identity && ipIdentity &&
+    await withinRateLimit(env, identity, action, identityLimit) &&
+    await withinRateLimit(env, ipIdentity, `${action}:ip`, ipLimit));
+}
+
+async function migrateLegacyIdentity(request: Request, env: Env, stableHash: string): Promise<void> {
+  const clientId = clientIdFrom(request);
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  const legacyHash = await sha256(`${env.CLIENT_HASH_SALT}:${clientId}:${ip}`);
+  if (legacyHash !== stableHash) {
+    await env.DB.prepare('UPDATE segments SET submitter_hash = ? WHERE submitter_hash = ?')
+      .bind(stableHash, legacyHash).run();
+  }
 }
 
 async function withinRateLimit(env: Env, identity: string, action: string, limit: number): Promise<boolean> {
@@ -46,6 +91,12 @@ async function withinRateLimit(env: Env, identity: string, action: string, limit
     ON CONFLICT(identity_hash, action, bucket) DO UPDATE SET count = count + 1
     RETURNING count
   `).bind(identity, action, bucket).first<{ count: number }>();
+  const sample = new Uint8Array(1);
+  crypto.getRandomValues(sample);
+  if (sample[0] === 0) {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().slice(0, 13);
+    await env.DB.prepare('DELETE FROM rate_limits WHERE bucket < ?').bind(cutoff).run();
+  }
   return Boolean(row && row.count <= limit);
 }
 
@@ -60,6 +111,9 @@ function segmentJson(row: SegmentRow) {
 
 async function getSegments(videoId: string, env: Env): Promise<Response> {
   if (!VIDEO_ID_PATTERN.test(videoId)) return json({ error: 'invalid_video_id' }, 400);
+  const videoHash = await sha256(videoId);
+  await env.DB.prepare('UPDATE segments SET video_hash = ? WHERE video_id = ? AND video_hash IS NULL')
+    .bind(videoHash, videoId).run();
   const result = await env.DB.prepare(`
     SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
     FROM segments WHERE video_id = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
@@ -67,12 +121,78 @@ async function getSegments(videoId: string, env: Env): Promise<Response> {
   return json({ videoId, segments: result.results.map(segmentJson) }, 200, { 'Cache-Control': 'public, max-age=60' });
 }
 
-async function submitSegment(request: Request, env: Env): Promise<Response> {
-  const identity = await identityHash(request, env);
+async function getSegmentsByHash(videoHash: string, env: Env): Promise<Response> {
+  if (!/^[0-9a-f]{64}$/i.test(videoHash)) return json({ error: 'invalid_video_hash' }, 400);
+  const result = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    FROM segments WHERE video_hash = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
+  `).bind(videoHash.toLowerCase()).all<SegmentRow>();
+  const segments = result.results.map((row) => {
+    const { videoId: _videoId, ...segment } = segmentJson(row);
+    return segment;
+  });
+  return json({ segments }, 200, { 'Cache-Control': 'public, max-age=60' });
+}
+
+async function getMySegments(request: Request, env: Env): Promise<Response> {
+  const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  if (!await withinRateLimit(env, identity, 'submit', 20)) return json({ error: 'rate_limited' }, 429);
-  const input = parseSegmentInput(await bodyJson(request));
+  await migrateLegacyIdentity(request, env, identity);
+  const result = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    FROM segments WHERE submitter_hash = ? AND status != 'rejected'
+    ORDER BY created_at DESC LIMIT 500
+  `).bind(identity).all<SegmentRow>();
+  const contributedMs = result.results.reduce((sum, row) => sum + Math.max(0, row.end_ms - row.start_ms), 0);
+  const impact = await env.DB.prepare(`
+    SELECT COUNT(*) AS skip_count, COUNT(DISTINCT skips.viewer_hash) AS helped_people,
+      COALESCE(SUM(skips.seconds_saved), 0) AS seconds_saved
+    FROM segment_skips AS skips
+    INNER JOIN segments ON segments.id = skips.segment_id
+    WHERE segments.submitter_hash = ?
+  `).bind(identity).first<{ skip_count: number; helped_people: number; seconds_saved: number }>();
+  return json({
+    segments: result.results.map(segmentJson),
+    stats: {
+      submittedCount: result.results.length,
+      contributedSeconds: contributedMs / 1000,
+      skipCount: Number(impact?.skip_count || 0),
+      helpedPeople: Number(impact?.helped_people || 0),
+      secondsSaved: Number(impact?.seconds_saved || 0),
+    },
+  });
+}
+
+async function recordSegmentSkip(request: Request, env: Env, segmentId: string): Promise<Response> {
+  const viewer = await contributorHash(request, env);
+  if (viewer === null) return json({ error: 'writes_not_configured' }, 503);
+  if (!viewer) return json({ error: 'invalid_client_id' }, 400);
+  if (!await allowedWriteRate(request, env, 'skip', 300, 2000)) return json({ error: 'rate_limited' }, 429);
+  const segment = await env.DB.prepare(`
+    SELECT start_ms, end_ms, submitter_hash FROM segments
+    WHERE id = ? AND status = 'trusted'
+  `).bind(segmentId).first<{ start_ms: number; end_ms: number; submitter_hash: string }>();
+  if (!segment) return json({ error: 'segment_not_found' }, 404);
+  if (segment.submitter_hash === viewer) return json({ recorded: false, reason: 'own_segment' });
+  const secondsSaved = Math.max(1, Math.round((segment.end_ms - segment.start_ms) / 1000));
+  const day = new Date().toISOString().slice(0, 10);
+  const result = await env.DB.prepare(`
+    INSERT OR IGNORE INTO segment_skips (segment_id, viewer_hash, day, seconds_saved, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(segmentId, viewer, day, secondsSaved, new Date().toISOString()).run();
+  return json({ recorded: Number(result.meta.changes || 0) > 0, secondsSaved });
+}
+
+async function submitSegment(request: Request, env: Env): Promise<Response> {
+  const identity = await contributorHash(request, env);
+  if (identity === null) return json({ error: 'writes_not_configured' }, 503);
+  if (!identity) return json({ error: 'invalid_client_id' }, 400);
+  if (!await allowedWriteRate(request, env, 'submit', 20, 100)) return json({ error: 'rate_limited' }, 429);
+  await migrateLegacyIdentity(request, env, identity);
+  const body = await bodyJson(request);
+  if (body === BODY_TOO_LARGE) return json({ error: 'payload_too_large' }, 413);
+  const input = parseSegmentInput(body);
   if (!input) return json({ error: 'invalid_segment' }, 400);
   const startMs = Math.round(input.start * 1000), endMs = Math.round(input.end * 1000);
   const existing = await env.DB.prepare(`
@@ -82,23 +202,26 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
   `).bind(input.videoId, input.category, startMs, endMs).first<SegmentRow>();
   if (existing) return json({ segment: segmentJson(existing), duplicate: true });
   const id = crypto.randomUUID(), now = new Date().toISOString();
+  const videoHash = await sha256(input.videoId);
   await env.DB.prepare(`
-    INSERT INTO segments (id, video_id, start_ms, end_ms, duration_ms, category, status, submitter_hash, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'trusted', ?, ?, ?)
-  `).bind(id, input.videoId, startMs, endMs, input.duration == null ? null : Math.round(input.duration * 1000), input.category, identity, now, now).run();
+    INSERT INTO segments (id, video_id, video_hash, start_ms, end_ms, duration_ms, category, status, submitter_hash, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'trusted', ?, ?, ?)
+  `).bind(id, input.videoId, videoHash, startMs, endMs, input.duration == null ? null : Math.round(input.duration * 1000), input.category, identity, now, now).run();
   return json({ segment: { id, videoId: input.videoId, start: input.start, end: input.end, category: input.category, status: 'trusted', upvotes: 0, downvotes: 0, score: 0, createdAt: now } }, 201);
 }
 
 async function vote(request: Request, env: Env, segmentId: string): Promise<Response> {
-  const identity = await identityHash(request, env);
+  const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  if (!await withinRateLimit(env, identity, 'vote', 60)) return json({ error: 'rate_limited' }, 429);
-  const body = await bodyJson(request) as { vote?: unknown } | null;
+  if (!await allowedWriteRate(request, env, 'vote', 60, 300)) return json({ error: 'rate_limited' }, 429);
+  const body = await bodyJson(request) as { vote?: unknown } | null | typeof BODY_TOO_LARGE;
+  if (body === BODY_TOO_LARGE) return json({ error: 'payload_too_large' }, 413);
   const value = Number(body?.vote);
   if (value !== 1 && value !== -1) return json({ error: 'invalid_vote' }, 400);
-  const exists = await env.DB.prepare('SELECT id FROM segments WHERE id = ?').bind(segmentId).first();
+  const exists = await env.DB.prepare('SELECT id, submitter_hash FROM segments WHERE id = ?').bind(segmentId).first<{id:string;submitter_hash:string}>();
   if (!exists) return json({ error: 'segment_not_found' }, 404);
+  if (exists.submitter_hash === identity) return json({ error: 'cannot_vote_own_segment' }, 403);
   const now = new Date().toISOString();
   await env.DB.prepare(`INSERT INTO votes (segment_id, voter_hash, vote, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(segment_id, voter_hash) DO UPDATE SET vote = excluded.vote, updated_at = excluded.updated_at`
@@ -115,15 +238,17 @@ async function vote(request: Request, env: Env, segmentId: string): Promise<Resp
 }
 
 async function report(request: Request, env: Env, segmentId: string): Promise<Response> {
-  const identity = await identityHash(request, env);
+  const identity = await contributorHash(request, env);
   if (identity === null) return json({ error: 'writes_not_configured' }, 503);
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
-  if (!await withinRateLimit(env, identity, 'report', 10)) return json({ error: 'rate_limited' }, 429);
-  const body = await bodyJson(request) as { reason?: unknown } | null;
+  if (!await allowedWriteRate(request, env, 'report', 10, 50)) return json({ error: 'rate_limited' }, 429);
+  const body = await bodyJson(request) as { reason?: unknown } | null | typeof BODY_TOO_LARGE;
+  if (body === BODY_TOO_LARGE) return json({ error: 'payload_too_large' }, 413);
   const reason = String(body?.reason || '');
   if (!REPORT_REASONS.has(reason)) return json({ error: 'invalid_reason' }, 400);
-  const exists = await env.DB.prepare('SELECT id FROM segments WHERE id = ?').bind(segmentId).first();
+  const exists = await env.DB.prepare('SELECT id, submitter_hash FROM segments WHERE id = ?').bind(segmentId).first<{id:string;submitter_hash:string}>();
   if (!exists) return json({ error: 'segment_not_found' }, 404);
+  if (exists.submitter_hash === identity) return json({ error: 'cannot_report_own_segment' }, 403);
   await env.DB.prepare(`INSERT INTO reports (segment_id, reporter_hash, reason, created_at) VALUES (?, ?, ?, ?)
     ON CONFLICT(segment_id, reporter_hash) DO UPDATE SET reason = excluded.reason`
   ).bind(segmentId, identity, reason, new Date().toISOString()).run();
@@ -137,12 +262,17 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url), path = url.pathname;
     try {
-      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 1 });
+      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 2 });
       const videoMatch = path.match(/^\/v1\/videos\/(\d+)\/segments$/);
       if (request.method === 'GET' && videoMatch) return getSegments(videoMatch[1], env);
+      const videoHashMatch = path.match(/^\/v1\/videos\/by-hash\/([0-9a-f]{64})\/segments$/i);
+      if (request.method === 'GET' && videoHashMatch) return getSegmentsByHash(videoHashMatch[1], env);
+      if (request.method === 'GET' && path === '/v1/me/segments') return getMySegments(request, env);
       if (request.method === 'POST' && path === '/v1/segments') return submitSegment(request, env);
       const voteMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/votes$/i);
       if (request.method === 'POST' && voteMatch) return vote(request, env, voteMatch[1]);
+      const skipMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/skips$/i);
+      if (request.method === 'POST' && skipMatch) return recordSegmentSkip(request, env, skipMatch[1]);
       const reportMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/reports$/i);
       if (request.method === 'POST' && reportMatch) return report(request, env, reportMatch[1]);
       return json({ error: 'not_found' }, 404);

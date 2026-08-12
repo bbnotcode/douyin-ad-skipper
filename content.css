@@ -98,10 +98,14 @@
   min-width: 1px;
   background: #00d400;
   opacity: .82;
+  pointer-events: auto;
 }
 
-.das-preview-segment.das-pending { background: #007800; }
-.das-preview-segment.das-candidate { background: #b8a900; }
+.das-preview-segment.das-category-sponsor { background:#00d400; }
+.das-preview-segment.das-category-selfpromo { background:#f4d03f; }
+.das-preview-segment.das-category-interaction { background:#d15cff; }
+.das-preview-segment.das-pending { opacity:.5; }
+.das-preview-segment.das-candidate { opacity:.68; background-image:repeating-linear-gradient(135deg,transparent 0 4px,rgba(0,0,0,.28) 4px 8px); }
 
 .das-submission-menu {
   position: absolute;
@@ -122,9 +126,18 @@
 .das-submission-menu header button { border: 0; color: #aaa; background: transparent; font-size: 24px; cursor: pointer; }
 .das-submission-menu p { margin: 10px 0; color: #b8bac1; }
 .das-submission-menu ol { max-height: 180px; margin: 0; padding: 0; overflow: auto; list-style: none; }
-.das-submission-menu li { display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.08); }
+.das-submission-menu li { display: flex; align-items:center; justify-content: space-between; gap:12px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.08); }
+.das-submission-menu li span { display:flex; flex-direction:column; }
+.das-submission-menu li small { margin-top:2px; color:#8f939d; }
+.das-submission-menu li button { padding:5px 10px; border:1px solid rgba(37,244,238,.3); border-radius:6px; color:#25f4ee; background:rgba(37,244,238,.08); cursor:pointer; }
+.das-submission-menu li select { max-width:105px; padding:5px 6px; border:1px solid rgba(255,255,255,.18); border-radius:6px; color:#fff; background:#292c33; }
 .das-submission-menu li em { color: #9da0a9; font-style: normal; }
 .das-submission-actions { display: flex; gap: 8px; margin-top: 14px; }
 .das-submission-actions button { flex: 1; padding: 9px 10px; border: 0; border-radius: 7px; color: #fff; background: #34363d; cursor: pointer; }
 .das-submission-actions button:first-child { color: #161823; background: #25f4ee; font-weight: 700; }
 .das-submission-actions button:disabled { opacity: .55; cursor: wait; }
+
+.das-toast-actions { display:flex; gap:6px; margin-left:12px; pointer-events:auto; }
+.das-toast-actions button { padding:4px 8px; border:1px solid rgba(255,255,255,.24); border-radius:6px; color:#fff; background:rgba(255,255,255,.1); cursor:pointer; }
+.das-toast-actions button:hover { border-color:#25f4ee; color:#25f4ee; }
+.das-toast-actions button:disabled { opacity:.55; cursor:default; }

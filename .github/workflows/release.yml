@@ -1,0 +1,38 @@
+name: Package release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Verify tag and extension
+        run: |
+          node scripts/validate-extension.mjs
+          node -e "const v=require('./manifest.json').version;if(process.env.GITHUB_REF_NAME!=='v'+v)throw new Error('Tag 与 manifest 版本不一致')"
+      - name: Test Worker
+        working-directory: server
+        run: npm ci && npm test && npm run check
+      - name: Build Chrome ZIP
+        run: |
+          mkdir -p dist/douyin-ad-skipper
+          cp manifest.json content.js content.css popup.html popup.js popup.css options.html options.js options.css LICENSE PRIVACY.md SECURITY.md dist/douyin-ad-skipper/
+          mkdir -p dist/douyin-ad-skipper/icons
+          cp icons/icon-16.png icons/icon-32.png icons/icon-48.png icons/icon-128.png dist/douyin-ad-skipper/icons/
+          cd dist/douyin-ad-skipper
+          zip -r ../douyin-ad-skipper-${GITHUB_REF_NAME}.zip .
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "dist/douyin-ad-skipper-${GITHUB_REF_NAME}.zip" --generate-notes --verify-tag

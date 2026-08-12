@@ -8,10 +8,16 @@
     skipLocalSegments: true,
     communityEnabled: true,
     communityApiBase: DEFAULT_COMMUNITY_API,
-    communityAutoSkipTrusted: true,
+    categoryModeSponsor: 'auto',
+    categoryModeSelfpromo: 'manual',
+    categoryModeInteraction: 'manual',
     communityClientId: '',
     showToast: true,
     debug: false,
+    shortcutsEnabled: true,
+    shortcutCreate: 'Alt+KeyZ',
+    shortcutCancel: 'Alt+KeyX',
+    shortcutSubmit: 'Alt+Enter',
     skippedCount: 0,
     localSegments: {},
   };
@@ -26,8 +32,12 @@
   let draftVideoId = null;
   let lastSegmentSkipKey = '';
   let mountScheduled = false;
+  let manualNoticeKey = '';
+  const skipSuppressedUntil = new Map();
   const communityCache = new Map();
   const COMMUNITY_CACHE_MS = 10 * 60 * 1000;
+  const CATEGORY_LABELS = { sponsor:'赞助/广告', selfpromo:'自我推广', interaction:'互动提醒' };
+  const CATEGORY_SETTING_KEYS = { sponsor:'categoryModeSponsor', selfpromo:'categoryModeSelfpromo', interaction:'categoryModeInteraction' };
 
   const log = (...args) => settings.debug && console.debug('[抖音广告跳过]', ...args);
 
@@ -116,6 +126,33 @@
     return id ? (settings.localSegments?.[id] || []) : [];
   }
 
+  function mergeOverlappingDrafts(segments) {
+    const sorted = [...segments].sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const segment of sorted) {
+      const previous = merged[merged.length - 1];
+      if (!previous || segment.start > previous.end + 0.25) {
+        merged.push(segment);
+        continue;
+      }
+      merged[merged.length - 1] = {
+        ...previous,
+        ...segment,
+        start: Math.min(previous.start, segment.start),
+        end: Math.max(previous.end, segment.end),
+        createdAt: Date.now(),
+        previewed: false,
+      };
+    }
+    return merged;
+  }
+
+  function setCommunityCache(videoId, value) {
+    communityCache.delete(videoId);
+    communityCache.set(videoId, value);
+    while (communityCache.size > 100) communityCache.delete(communityCache.keys().next().value);
+  }
+
   function communitySegments(video) {
     const id = extractVideoId(video);
     const cached = id && communityCache.get(id);
@@ -131,6 +168,11 @@
     }
   }
 
+  async function sha256Hex(value) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
   async function loadCommunitySegments(video) {
     if (!settings.communityEnabled) return;
     const videoId = extractVideoId(video);
@@ -138,24 +180,25 @@
     if (!videoId || !apiBase) return;
     const cached = communityCache.get(videoId);
     if (cached && Date.now() - cached.loadedAt < COMMUNITY_CACHE_MS) return;
-    communityCache.set(videoId, { loadedAt: Date.now(), segments: cached?.segments || [], loading: true });
+    setCommunityCache(videoId, { loadedAt: Date.now(), segments: cached?.segments || [], loading: true });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4000);
     try {
-      const response = await fetch(`${apiBase}/v1/videos/${videoId}/segments`, {
+      const videoHash = await sha256Hex(videoId);
+      const response = await fetch(`${apiBase}/v1/videos/by-hash/${videoHash}/segments`, {
         headers: { Accept: 'application/json' },
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       const segments = Array.isArray(payload.segments) ? payload.segments
-        .filter((item) => item.category === 'sponsor' && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
-        .map((item) => ({ start: item.start, end: item.end, source: 'community', id: item.id, status: item.status })) : [];
-      communityCache.set(videoId, { loadedAt: Date.now(), segments });
+        .filter((item) => CATEGORY_LABELS[item.category] && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+        .map((item) => ({ start: item.start, end: item.end, category:item.category, source: 'community', id: item.id, status: item.status })) : [];
+      setCommunityCache(videoId, { loadedAt: Date.now(), segments });
       renderPreviewBar();
       log('已加载社区片段', videoId, segments.length);
     } catch (error) {
-      communityCache.set(videoId, { loadedAt: Date.now(), segments: cached?.segments || [] });
+      setCommunityCache(videoId, { loadedAt: Date.now(), segments: cached?.segments || [] });
       log('社区片段查询失败，继续使用本地数据', error);
     } finally {
       clearTimeout(timer);
@@ -211,7 +254,7 @@
     return null;
   }
 
-  function showToast(message) {
+  function showToast(message, actions = []) {
     if (!settings.showToast) return;
     let toast = document.getElementById('das-toast');
     if (!toast) {
@@ -219,15 +262,34 @@
       toast.id = 'das-toast';
       document.documentElement.appendChild(toast);
     }
-    toast.textContent = message;
+    toast.replaceChildren();
+    const text = document.createElement('span');
+    text.textContent = message;
+    toast.appendChild(text);
+    if (actions.length) {
+      const controls = document.createElement('span');
+      controls.className = 'das-toast-actions';
+      for (const action of actions) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = action.label;
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          controls.querySelectorAll('button').forEach((item) => { item.disabled = true; });
+          action.run();
+        });
+        controls.appendChild(button);
+      }
+      toast.appendChild(controls);
+    }
     toast.classList.remove('das-visible');
     requestAnimationFrame(() => toast.classList.add('das-visible'));
     clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => toast.classList.remove('das-visible'), 1800);
+    showToast.timer = setTimeout(() => toast.classList.remove('das-visible'), actions.length ? 6000 : 1800);
   }
 
-  async function recordSkip() {
-    settings.skippedCount = Number(settings.skippedCount || 0) + 1;
+  async function recordSkip(change = 1) {
+    settings.skippedCount = Math.max(0, Number(settings.skippedCount || 0) + change);
     await chrome.storage.local.set({ skippedCount: settings.skippedCount, lastSkippedAt: Date.now() });
   }
 
@@ -294,6 +356,25 @@
     });
   }
 
+  function handleShortcut(event) {
+    if (!settings.shortcutsEnabled || event.repeat) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
+    let action='';
+    const signature=shortcutSignature(event);
+    if(signature===settings.shortcutCreate)action=draftStart===null?'start':'end';
+    if(signature===settings.shortcutCancel&&draftStart!==null)action='cancel';
+    if(signature===settings.shortcutSubmit&&draftStart===null)action='submit';
+    if(!action)return;
+    const controls=ensurePlayerControls();const button=controls?.querySelector(`[data-action="${action}"]`);
+    if(!button)return;
+    event.preventDefault();event.stopPropagation();button.click();
+  }
+
+  function shortcutSignature(event) {
+    return [event.ctrlKey?'Ctrl':'',event.altKey?'Alt':'',event.shiftKey?'Shift':'',event.metaKey?'Meta':'',event.code].filter(Boolean).join('+');
+  }
+
   async function handlePlayerControl(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -322,10 +403,10 @@
         showToast('结束时间必须晚于开始时间');
         return;
       }
+      if (end - draftStart < 1 && !confirm('这个片段不足 1 秒，时间点可能不准确。仍然保存吗？')) return;
       const savedStart = draftStart;
       const metadata = getVideoMetadata(video, videoId);
-      const segments = [...currentSegments(video), { start: savedStart, end, createdAt: Date.now(), submissionStatus: 'pending', ...metadata }]
-        .sort((a, b) => a.start - b.start);
+      const segments = mergeOverlappingDrafts([...currentSegments(video), { start: savedStart, end, category:'sponsor', createdAt: Date.now(), submissionStatus: 'pending', previewed:false, ...metadata }]);
       const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
       settings.localSegments = localSegments;
       await chrome.storage.local.set({ localSegments });
@@ -381,18 +462,52 @@
     if (!pending.length) return;
     const menu = document.createElement('section');
     menu.className = 'das-submission-menu';
+    const allPreviewed = pending.every((item) => item.previewed === true);
     menu.innerHTML = `<header><strong>提交广告片段</strong><button type="button" data-menu-action="close" aria-label="关闭">×</button></header>
-      <p>以下片段会作为“赞助/广告”提交；审核通过后，其他用户也能自动跳过。</p>
-      <ol>${pending.map((item) => `<li><span>${formatTime(item.start)} – ${formatTime(item.end)}</span><em>${(item.end - item.start).toFixed(1)} 秒</em></li>`).join('')}</ol>
-      <div class="das-submission-actions"><button type="button" data-menu-action="submit">提交到社区</button><button type="button" data-menu-action="keep">暂时保留本地</button></div>`;
+      <p>提交前请逐段预览，确认开始和结束时间准确。</p>
+      <ol>${pending.map((item,index) => `<li><span>${formatTime(item.start)} – ${formatTime(item.end)}<small>${item.previewed?'✓ 已预览':'尚未预览'}</small></span><select data-menu-action="category" data-preview-index="${index}" aria-label="片段分类"><option value="sponsor" ${(item.category||'sponsor')==='sponsor'?'selected':''}>赞助/广告</option><option value="selfpromo" ${item.category==='selfpromo'?'selected':''}>自我推广</option><option value="interaction" ${item.category==='interaction'?'selected':''}>互动提醒</option></select><button type="button" data-menu-action="preview" data-preview-index="${index}">${item.previewed?'重新预览':'预览'}</button></li>`).join('')}</ol>
+      <div class="das-submission-actions"><button type="button" data-menu-action="submit" ${allPreviewed?'':'disabled'}>${allPreviewed?'提交到社区':'请先预览全部'}</button><button type="button" data-menu-action="keep">暂时保留本地</button></div>`;
     menu.addEventListener('pointerdown', (event) => event.stopPropagation());
     menu.addEventListener('click', async (event) => {
       event.stopPropagation();
       const action = event.target.closest('button')?.dataset.menuAction;
       if (action === 'close' || action === 'keep') closeSubmissionMenu();
+      if (action === 'preview') await previewPendingSegment(video, videoId, pending[Number(event.target.closest('button').dataset.previewIndex)]);
       if (action === 'submit') await submitPendingSegments(video, videoId, menu);
     });
+    menu.addEventListener('change', async (event) => {
+      const select=event.target.closest('select[data-menu-action="category"]');if(!select)return;
+      const target=pending[Number(select.dataset.previewIndex)];if(!target||!CATEGORY_LABELS[select.value])return;
+      const segments=[...(settings.localSegments?.[videoId]||[])];const stored=segments.find((item)=>item.createdAt===target.createdAt);
+      if(stored)stored.category=select.value;target.category=select.value;
+      settings.localSegments={...(settings.localSegments||{}),[videoId]:segments};await chrome.storage.local.set({localSegments:settings.localSegments});renderPreviewBar();
+    });
     player.appendChild(menu);
+  }
+
+  async function previewPendingSegment(video, videoId, segment) {
+    if (!segment) return;
+    video.currentTime = Math.max(0, segment.start - 2);
+    try { await video.play(); } catch {}
+    showToast(`正在预览 ${formatTime(segment.start)}–${formatTime(segment.end)}`);
+    const startedAt = Date.now();
+    const timer = setInterval(async () => {
+      if (extractVideoId(video) !== videoId || Date.now() - startedAt > 15000) {
+        clearInterval(timer);
+        if (Date.now() - startedAt > 15000) showToast('未完成预览，请保持播放至片段结束');
+        return;
+      }
+      if (video.currentTime < segment.end - 0.15) return;
+      clearInterval(timer);
+      const segments = [...(settings.localSegments?.[videoId] || [])];
+      const target = segments.find((item) => item.createdAt === segment.createdAt && item.start === segment.start && item.end === segment.end);
+      if (target) target.previewed = true;
+      settings.localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
+      await chrome.storage.local.set({ localSegments: settings.localSegments });
+      closeSubmissionMenu();
+      openSubmissionMenu(video, videoId);
+      showToast('片段预览完成');
+    }, 150);
   }
 
   async function submitPendingSegments(video, videoId, menu) {
@@ -403,9 +518,16 @@
       return;
     }
     const button = menu.querySelector('[data-menu-action="submit"]');
+    const pending = currentSegments(video).filter((segment) => (segment.submissionStatus || 'pending') === 'pending');
+    if (!pending.length || pending.some((segment) => segment.previewed !== true)) {
+      showToast('请先预览全部待提交片段');
+      return;
+    }
     button.disabled = true;
     button.textContent = '提交中…';
     const segments = [...currentSegments(video)];
+    const submittedSegments = new Set();
+    const confirmedCommunitySegments = [];
     let submitted = 0;
     for (const segment of segments) {
       if ((segment.submissionStatus || 'pending') !== 'pending') continue;
@@ -413,19 +535,37 @@
         const response = await fetch(`${apiBase}/v1/segments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Client-ID': settings.communityClientId },
-          body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: 'sponsor', clientRequestId: crypto.randomUUID() }),
+          body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: segment.category || 'sponsor', clientRequestId: crypto.randomUUID() }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
-        segment.submissionStatus = 'submitted';
-        segment.communityId = payload.segment?.id || payload.id || '';
+        const confirmed = payload.segment;
+        if (confirmed && Number.isFinite(confirmed.start) && Number.isFinite(confirmed.end)) {
+          confirmedCommunitySegments.push({
+            start: confirmed.start,
+            end: confirmed.end,
+            source: 'community',
+            id: confirmed.id,
+            status: confirmed.status || 'trusted',
+            category: confirmed.category || segment.category || 'sponsor',
+          });
+        }
+        submittedSegments.add(segment);
         submitted += 1;
       } catch (error) {
         log('社区片段提交失败', error);
       }
     }
-    const localSegments = { ...(settings.localSegments || {}), [videoId]: segments };
+    const localSegments = { ...(settings.localSegments || {}) };
+    const remaining = segments.filter((segment) => !submittedSegments.has(segment));
+    if (remaining.length) localSegments[videoId] = remaining;
+    else delete localSegments[videoId];
     settings.localSegments = localSegments;
+    if (confirmedCommunitySegments.length) {
+      const cached = communityCache.get(videoId);
+      const byId = new Map([...(cached?.segments || []), ...confirmedCommunitySegments].map((item) => [item.id || `${item.start}:${item.end}`, item]));
+      setCommunityCache(videoId, { loadedAt: Date.now(), segments: [...byId.values()] });
+    }
     await chrome.storage.local.set({ localSegments });
     closeSubmissionMenu();
     renderPlayerControls();
@@ -476,7 +616,11 @@
     items.sort((a, b) => (b.end - b.start) - (a.end - a.start));
     bar.replaceChildren(...items.map((item) => {
       const segment = document.createElement('span');
-      segment.className = `das-preview-segment das-${item.previewState}`;
+      const category=item.category||'sponsor';
+      segment.className = `das-preview-segment das-${item.previewState} das-category-${category}`;
+      const stateName = item.previewState === 'pending' ? '待提交' : item.previewState === 'candidate' ? '待确认' : '社区';
+      segment.title = `${stateName}${CATEGORY_LABELS[category]||'片段'} ${formatTime(item.start)}–${formatTime(item.end)}`;
+      segment.setAttribute('aria-label', segment.title);
       segment.style.left = `${Math.max(0, item.start / video.duration * 100)}%`;
       segment.style.width = `${Math.max(0.08, (Math.min(video.duration, item.end) - Math.max(0, item.start)) / video.duration * 100)}%`;
       return segment;
@@ -484,26 +628,121 @@
   }
 
   async function checkLocalSegments() {
-    if (!settings.enabled || !settings.skipLocalSegments || document.hidden) return;
+    if (!settings.enabled || document.hidden) return;
     const video = getActiveVideo();
     if (!video || video.paused || video.seeking) return;
     const videoId = extractVideoId(video);
     if (!videoId) return;
     loadCommunitySegments(video);
     const now = video.currentTime;
-    const available = [
-      ...currentSegments(video),
-      ...(settings.communityAutoSkipTrusted ? communitySegments(video).filter((segment) => segment.status === 'trusted') : []),
-    ];
+    const localAvailable = settings.skipLocalSegments ? currentSegments(video) : [];
+    const trustedCommunity = communitySegments(video).filter((segment) => segment.status === 'trusted');
+    const modeFor=(segment)=>settings[CATEGORY_SETTING_KEYS[segment.category||'sponsor']]||'manual';
+    const manualSegment = trustedCommunity.filter((segment)=>modeFor(segment)==='manual').find(({start,end}) => now >= start - 0.12 && now < end - 0.05);
+    if (manualSegment) {
+      const noticeKey=`${videoId}:${manualSegment.id}:${manualSegment.start}`;
+      if(manualNoticeKey!==noticeKey){
+        manualNoticeKey=noticeKey;
+        showToast(`发现${CATEGORY_LABELS[manualSegment.category||'sponsor']} ${formatTime(manualSegment.start)}–${formatTime(manualSegment.end)}`, [
+          {label:'立即跳过',run:()=>skipKnownSegment(video,videoId,manualSegment)},
+          {label:'本次忽略',run:()=>skipSuppressedUntil.set(`${videoId}:${manualSegment.start}:${manualSegment.end}`,Date.now()+Math.max(1000,(manualSegment.end-video.currentTime+1)*1000))},
+        ]);
+      }
+    } else manualNoticeKey='';
+    const available = [...localAvailable, ...trustedCommunity.filter((segment)=>modeFor(segment)==='auto')];
     const segment = available.find(({ start, end }) => now >= start - 0.12 && now < end - 0.05);
     if (!segment) return;
     const key = `${videoId}:${segment.start}:${segment.end}`;
+    if (Number(skipSuppressedUntil.get(key) || 0) > Date.now()) return;
     if (lastSegmentSkipKey === key && Math.abs(now - segment.start) > 0.5) return;
+    await skipKnownSegment(video,videoId,segment,key);
+  }
+
+  async function skipKnownSegment(video, videoId, segment, knownKey) {
+    const key=knownKey||`${videoId}:${segment.start}:${segment.end}`;
+    if (Number(skipSuppressedUntil.get(key) || 0) > Date.now()) return;
     lastSegmentSkipKey = key;
     video.currentTime = Math.min(segment.end, video.duration || segment.end);
     await recordSkip();
-    showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}`);
+    const impactTimer = segment.source === 'community' && segment.id
+      ? setTimeout(() => { void recordCommunitySkip(segment); }, 3000)
+      : null;
+    const undo = async () => {
+      if (impactTimer) clearTimeout(impactTimer);
+      skipSuppressedUntil.set(key, Date.now() + 12000);
+      video.currentTime = Math.max(0, segment.start);
+      await recordSkip(-1);
+      showToast('已撤销跳过，12 秒内不会再次自动跳过', [{
+        label:'重新跳过',
+        run:()=>{skipSuppressedUntil.delete(key);lastSegmentSkipKey='';void skipKnownSegment(video,videoId,segment,key)},
+      }]);
+    };
+    const actions = [{ label:'撤销', run:undo }];
+    if (segment.source === 'community' && segment.id) {
+      actions.push(
+        { label:'赞成', run:()=>voteOnSegment(segment,1) },
+        { label:'反对', run:()=>voteOnSegment(segment,-1) },
+        { label:'举报', run:()=>showReportChoices(segment) },
+      );
+    }
+    showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}`, actions);
     log(segment.source === 'community' ? '跳过社区可信片段' : '跳过本地标记片段', videoId, segment);
+  }
+
+  async function recordCommunitySkip(segment) {
+    const apiBase = normalizedApiBase();
+    if (!apiBase || !settings.communityClientId) return;
+    try {
+      const response = await fetch(`${apiBase}/v1/segments/${segment.id}/skips`, {
+        method:'POST', headers:{'X-Client-ID':settings.communityClientId},
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      log('已记录社区片段贡献', segment.id);
+    } catch (error) {
+      log('记录社区片段贡献失败', error);
+    }
+  }
+
+  async function voteOnSegment(segment, vote) {
+    const apiBase = normalizedApiBase();
+    if (!apiBase || !settings.communityClientId) return;
+    try {
+      const response = await fetch(`${apiBase}/v1/segments/${segment.id}/votes`, {
+        method:'POST', headers:{'Content-Type':'application/json','X-Client-ID':settings.communityClientId}, body:JSON.stringify({vote}),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = await response.json();
+      segment.status = result.status || segment.status;
+      showToast(vote === 1 ? '感谢确认这个片段' : '已反馈：这个片段有问题');
+    } catch (error) {
+      log('片段投票失败', error);
+      showToast('反馈失败，请稍后重试');
+    }
+  }
+
+  function showReportChoices(segment) {
+    showToast('请选择问题类型', [
+      { label:'时间错误', run:()=>reportSegment(segment,'wrong_time') },
+      { label:'不是广告', run:()=>reportSegment(segment,'not_ad') },
+      { label:'视频不符', run:()=>reportSegment(segment,'wrong_video') },
+      { label:'滥用', run:()=>reportSegment(segment,'abuse') },
+    ]);
+  }
+
+  async function reportSegment(segment, reason) {
+    const apiBase = normalizedApiBase();
+    if (!apiBase || !settings.communityClientId) return;
+    try {
+      const response = await fetch(`${apiBase}/v1/segments/${segment.id}/reports`, {
+        method:'POST', headers:{'Content-Type':'application/json','X-Client-ID':settings.communityClientId}, body:JSON.stringify({reason}),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await response.json();
+      showToast('举报已提交，感谢帮助维护社区质量');
+    } catch (error) {
+      log('片段举报失败', error);
+      showToast('举报失败，请稍后重试');
+    }
   }
 
   function moveToNextVideo() {
@@ -542,21 +781,36 @@
     log('命中广告标识', signal.type, signal.text, signal.element);
   }
 
-  chrome.storage.local.get(DEFAULTS, (stored) => {
+  async function getContributorId() {
+    const synced = await chrome.storage.sync.get({ communityContributorId: '' });
+    if (/^[0-9a-f-]{16,64}$/i.test(synced.communityContributorId)) return synced.communityContributorId;
+    const legacy = await chrome.storage.local.get({ communityClientId: '' });
+    const id = /^[0-9a-f-]{16,64}$/i.test(legacy.communityClientId) ? legacy.communityClientId : crypto.randomUUID();
+    await chrome.storage.sync.set({ communityContributorId: id });
+    await chrome.storage.local.remove('communityClientId');
+    return id;
+  }
+
+  (async () => {
+    const stored = await chrome.storage.local.get(null);
     settings = { ...DEFAULTS, ...stored };
-    if (/^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
+    if (!Object.hasOwn(stored, 'categoryModeSponsor')) {
+      const legacyMode = ['auto', 'manual', 'disabled'].includes(stored.communitySkipMode) ? stored.communitySkipMode : 'auto';
+      const categoryModes = { categoryModeSponsor: legacyMode, categoryModeSelfpromo: legacyMode, categoryModeInteraction: legacyMode };
+      settings = { ...settings, ...categoryModes };
+      await chrome.storage.local.set(categoryModes);
+    }
+    await chrome.storage.local.remove(['communitySkipMode', 'communityAutoSkipTrusted']);
+    if (!settings.communityApiBase || /^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
       settings.communityApiBase = DEFAULT_COMMUNITY_API;
       settings.communityEnabled = true;
-      chrome.storage.local.set({ communityApiBase: DEFAULT_COMMUNITY_API, communityEnabled: true });
+      await chrome.storage.local.set({ communityApiBase: DEFAULT_COMMUNITY_API, communityEnabled: true });
     }
-    if (!settings.communityClientId) {
-      settings.communityClientId = crypto.randomUUID();
-      chrome.storage.local.set({ communityClientId: settings.communityClientId });
-    }
+    settings.communityClientId = await getContributorId();
     log('扩展已启动', settings);
     checkCurrentVideo();
     ensurePlayerControls();
-  });
+  })();
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
@@ -577,6 +831,7 @@
   document.addEventListener('play', schedulePlayerControls, true);
   document.addEventListener('loadedmetadata', schedulePlayerControls, true);
   document.addEventListener('pointermove', schedulePlayerControls, { passive: true });
+  document.addEventListener('keydown', handleShortcut, true);
   setInterval(checkCurrentVideo, CHECK_INTERVAL_MS);
   setInterval(checkLocalSegments, 250);
   setInterval(schedulePlayerControls, 300);

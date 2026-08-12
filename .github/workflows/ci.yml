@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, agent/community-api]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Validate extension
+        run: |
+          node --check content.js
+          node --check popup.js
+          node --check options.js
+          node scripts/validate-extension.mjs
+      - name: Install Worker dependencies
+        working-directory: server
+        run: npm ci
+      - name: Test Worker
+        working-directory: server
+        run: npm test
+      - name: Type-check Worker
+        working-directory: server
+        run: npm run check
