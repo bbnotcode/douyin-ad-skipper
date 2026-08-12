@@ -109,33 +109,74 @@
 
 .das-submission-menu {
   position: absolute;
-  right: 86px;
-  bottom: 64px;
+  right: clamp(16px, 5vw, 86px);
+  bottom: 68px;
   z-index: 10020;
-  width: min(360px, calc(100% - 32px));
-  padding: 16px;
+  width: min(440px, calc(100% - 32px));
+  max-height: min(560px, calc(100% - 92px));
+  padding: 0;
+  overflow: hidden;
   border: 1px solid rgba(255,255,255,.14);
-  border-radius: 12px;
+  border-radius: 16px;
   color: #fff;
-  background: rgba(22,24,29,.96);
+  background: rgba(18,20,25,.97);
+  backdrop-filter: blur(18px);
   box-shadow: 0 16px 50px rgba(0,0,0,.45);
   font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-.das-submission-menu header { display: flex; align-items: center; justify-content: space-between; font-size: 17px; }
-.das-submission-menu header button { border: 0; color: #aaa; background: transparent; font-size: 24px; cursor: pointer; }
-.das-submission-menu p { margin: 10px 0; color: #b8bac1; }
-.das-submission-menu ol { max-height: 180px; margin: 0; padding: 0; overflow: auto; list-style: none; }
-.das-submission-menu li { display: flex; align-items:center; justify-content: space-between; gap:12px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.08); }
-.das-submission-menu li span { display:flex; flex-direction:column; }
-.das-submission-menu li small { margin-top:2px; color:#8f939d; }
-.das-submission-menu li button { padding:5px 10px; border:1px solid rgba(37,244,238,.3); border-radius:6px; color:#25f4ee; background:rgba(37,244,238,.08); cursor:pointer; }
-.das-submission-menu li select { max-width:105px; padding:5px 6px; border:1px solid rgba(255,255,255,.18); border-radius:6px; color:#fff; background:#292c33; }
+.das-submission-menu header { display:flex; align-items:center; justify-content:space-between; padding:16px 18px 11px; }
+.das-submission-menu header div { display:flex; min-width:0; flex-direction:column; }
+.das-submission-menu header strong { font-size:18px; }
+.das-submission-menu header small { margin-top:2px; color:#858a95; font-size:11px; font-weight:500; }
+.das-submission-menu header button { display:grid; flex:none; place-items:center; width:32px; height:32px; padding:0; border:0; border-radius:8px; color:#aaa; background:transparent; font-size:25px; cursor:pointer; }
+.das-submission-menu header button:hover { color:#fff; background:rgba(255,255,255,.08); }
+.das-submission-menu > p { margin:0; padding:0 18px 13px; color:#aeb2bc; font-size:12px; }
+.das-submission-menu ol { max-height:min(380px, calc(100vh - 286px)); margin:0; padding:0 10px; overflow:auto; list-style:none; scrollbar-width:thin; }
+.das-submission-menu li { display:grid; grid-template-columns:minmax(112px,auto) minmax(0,1fr); gap:12px 14px; padding:15px 8px; border-top:1px solid rgba(255,255,255,.09); }
+.das-segment-summary { display:flex; align-self:start; flex-direction:column; padding-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.das-segment-category { min-width:0; }
+.das-submission-menu li small { margin-top:3px; color:#8f939d; font-size:11px; }
+.das-submission-menu li button { min-height:32px; padding:5px 10px; border:1px solid rgba(37,244,238,.3); border-radius:7px; color:#25f4ee; background:rgba(37,244,238,.08); cursor:pointer; white-space:nowrap; }
+.das-submission-menu li button:hover { background:rgba(37,244,238,.15); }
+.das-submission-menu li button.das-active { color:#161823; background:#25f4ee; }
+.das-submission-menu li select { min-width:0; width:100%; padding:6px 8px; border:1px solid rgba(255,255,255,.18); border-radius:7px; color:#fff; background:#292c33; }
 .das-submission-menu li em { color: #9da0a9; font-style: normal; }
-.das-submission-actions { display: flex; gap: 8px; margin-top: 14px; }
-.das-submission-actions button { flex: 1; padding: 9px 10px; border: 0; border-radius: 7px; color: #fff; background: #34363d; cursor: pointer; }
+.das-segment-primary-actions { grid-column:1 / -1; display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:7px; }
+.das-segment-primary-actions button { display:flex; min-width:0; height:48px; align-items:center; justify-content:center; gap:7px; padding:6px 8px !important; color:#e7e9ee !important; border-color:rgba(255,255,255,.13) !important; background:rgba(255,255,255,.045) !important; }
+.das-segment-primary-actions button:first-child { color:#25f4ee !important; border-color:rgba(37,244,238,.28) !important; background:rgba(37,244,238,.09) !important; }
+.das-segment-primary-actions button:hover { border-color:rgba(37,244,238,.42) !important; background:rgba(37,244,238,.13) !important; }
+.das-segment-primary-actions button b { flex:none; font-size:15px; font-weight:500; }
+.das-segment-primary-actions button span { overflow:hidden; text-overflow:ellipsis; }
+.das-segment-secondary-actions { grid-column:1 / -1; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.das-segment-secondary-actions button { min-height:30px !important; padding:4px 2px !important; border:0 !important; color:#aeb2bc !important; background:transparent !important; }
+.das-segment-secondary-actions button:hover { color:#25f4ee !important; background:transparent !important; }
+.das-segment-secondary-actions button[data-menu-action="toggle-editor"] { display:flex; align-items:center; gap:7px; }
+.das-segment-secondary-actions button[data-menu-action="toggle-editor"] b { transition:transform .16s ease; }
+.das-segment-secondary-actions button[data-menu-action="toggle-editor"].das-active b { transform:rotate(180deg); }
+.das-segment-secondary-actions button[data-menu-action="delete-segment"] { color:#ff718d !important; }
+.das-segment-editor { grid-column:1 / -1; display:grid; grid-template-columns:36px 32px minmax(84px,1fr) 32px; gap:5px; align-items:center; }
+.das-segment-editor[hidden] { display:none; }
+.das-segment-editor > span { color:#8f939d; font-size:11px; }
+.das-segment-editor button[data-menu-action="seek-boundary"] { color:#fff; border-color:rgba(255,255,255,.14); background:#292c33; font-variant-numeric:tabular-nums; }
+.das-segment-editor button[data-menu-action="adjust"] { padding:0; font-size:17px; }
+.das-frame-controls { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:7px; padding-top:11px; border-top:1px solid rgba(255,255,255,.08); }
+.das-frame-controls button { display:flex; height:42px; align-items:center; justify-content:center; gap:8px; color:#dfe2e8 !important; border-color:rgba(255,255,255,.14) !important; background:rgba(255,255,255,.045) !important; }
+.das-frame-controls button:hover { color:#25f4ee !important; border-color:rgba(37,244,238,.4) !important; background:rgba(37,244,238,.1) !important; }
+.das-frame-controls button b { color:#25f4ee; font-size:22px; font-weight:400; line-height:1; }
+.das-frame-controls kbd { min-width:24px; padding:2px 6px; border:1px solid #4a4f5b; border-bottom-width:2px; border-radius:5px; color:#b9bdc6; background:#292c33; font:11px/1.4 inherit; text-align:center; }
+.das-submission-actions { display:grid; grid-template-columns:1.15fr .85fr; gap:10px; padding:0 18px 18px; }
+.das-submission-actions button { flex:1; min-width:0; padding:10px; border:0; border-radius:8px; overflow:hidden; color:#fff; background:#34363d; cursor:pointer; text-overflow:ellipsis; white-space:nowrap; }
 .das-submission-actions button:first-child { color: #161823; background: #25f4ee; font-weight: 700; }
 .das-submission-actions button:disabled { opacity: .55; cursor: wait; }
+
+@media (max-width: 520px) {
+  .das-submission-menu { right:8px; bottom:56px; width:calc(100% - 16px); max-height:calc(100% - 68px); }
+  .das-submission-menu li { grid-template-columns:1fr; }
+  .das-segment-primary-actions { grid-template-columns:1fr 1fr; }
+  .das-segment-primary-actions button:first-child { grid-column:1 / -1; }
+  .das-submission-actions { grid-template-columns:1fr; }
+}
 
 .das-toast-actions { display:flex; gap:6px; margin-left:12px; pointer-events:auto; }
 .das-toast-actions button { padding:4px 8px; border:1px solid rgba(255,255,255,.24); border-radius:6px; color:#fff; background:rgba(255,255,255,.1); cursor:pointer; }
