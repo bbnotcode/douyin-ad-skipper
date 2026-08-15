@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>抖音广告自动跳过</title>
+  <title>抖音网页版社区片段助手</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <main>
     <header>
       <span class="mark">跳</span>
-      <div><h1>抖音广告跳过</h1><p>整条广告 + 社区片段</p></div>
+      <div><h1>抖音网页版社区片段助手</h1><p id="communitySummary">仅本地模式</p></div>
     </header>
 
     <label class="setting primary">
-      <span><strong>自动跳过</strong><small>整条广告、草稿与社区片段</small></span>
+      <span><strong>时间片段助手</strong><small>播放器标记、预览与片段跳过</small></span>
       <input id="enabled" type="checkbox"><i></i>
     </label>
     <label class="setting">
-      <span><strong>显示跳过提示</strong></span>
+      <span><strong>显示跳过提示</strong><small>必要操作和错误仍会显示</small></span>
       <input id="showToast" type="checkbox"><i></i>
     </label>
     <label class="setting">
@@ -34,7 +34,12 @@
       <button id="openSegments"><span>≡</span>片段管理</button>
       <button id="openOptions"><span>⚙</span>完整设置</button>
     </section>
-    <p class="note">默认连接公共社区 API，只查询当前作品，不上传完整浏览记录。</p>
+    <section id="consentNotice" class="consent-notice" hidden>
+      <strong>社区功能尚未启用</strong>
+      <p>明确同意后，扩展才会发送当前作品 ID 的哈希值来查询社区片段。</p>
+      <button id="reviewConsent">查看并选择</button>
+    </section>
+    <p class="note">本地草稿不会自动上传。</p>
   </main>
   <script src="popup.js"></script>
 </body>

@@ -1,4 +1,4 @@
-import { REPORT_REASONS, VIDEO_ID_PATTERN, parseSegmentInput, statusFromVotes } from './validation';
+import { REPORT_REASONS, VIDEO_ID_PATTERN, parseSegmentInput, statusFromVotes } from './validation.ts';
 
 interface Env {
   DB: D1Database;
@@ -9,6 +9,9 @@ type SegmentRow = {
   id: string; video_id: string; start_ms: number; end_ms: number; category: string;
   status: string; upvotes: number; downvotes: number; created_at: string;
 };
+
+type OwnedSegmentRow = SegmentRow & { owned_by_me: number };
+type SubmitterSegmentRow = SegmentRow & { submitter_hash: string };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -100,13 +103,14 @@ async function withinRateLimit(env: Env, identity: string, action: string, limit
   return Boolean(row && row.count <= limit);
 }
 
-function segmentJson(row: SegmentRow) {
-  return {
+export function segmentJson(row: SegmentRow, ownedByMe?: boolean) {
+  const segment = {
     id: row.id, videoId: row.video_id, start: row.start_ms / 1000, end: row.end_ms / 1000,
     category: row.category, status: row.status, upvotes: row.upvotes, downvotes: row.downvotes,
     score: row.upvotes + row.downvotes ? row.upvotes / (row.upvotes + row.downvotes) : 0,
     createdAt: row.created_at,
   };
+  return ownedByMe === undefined ? segment : { ...segment, ownedByMe };
 }
 
 async function getSegments(videoId: string, env: Env): Promise<Response> {
@@ -118,18 +122,21 @@ async function getSegments(videoId: string, env: Env): Promise<Response> {
     SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
     FROM segments WHERE video_id = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
   `).bind(videoId).all<SegmentRow>();
-  return json({ videoId, segments: result.results.map(segmentJson) });
+  return json({ videoId, segments: result.results.map((row) => segmentJson(row)) });
 }
 
-async function getSegmentsByHash(videoHash: string, env: Env): Promise<Response> {
+async function getSegmentsByHash(request: Request, videoHash: string, env: Env): Promise<Response> {
   if (!/^[0-9a-f]{64}$/i.test(videoHash)) return json({ error: 'invalid_video_hash' }, 400);
+  const identity = await contributorHash(request, env);
+  const ownershipIdentity = identity || '';
   const result = await env.DB.prepare(`
-    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at,
+      CASE WHEN ? != '' AND submitter_hash = ? THEN 1 ELSE 0 END AS owned_by_me
     FROM segments WHERE video_hash = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
-  `).bind(videoHash.toLowerCase()).all<SegmentRow>();
+  `).bind(ownershipIdentity, ownershipIdentity, videoHash.toLowerCase()).all<OwnedSegmentRow>();
   const segments = result.results.map((row) => {
     const { videoId: _videoId, ...segment } = segmentJson(row);
-    return segment;
+    return { ...segment, ownedByMe: Boolean(row.owned_by_me) };
   });
   return json({ segments });
 }
@@ -153,7 +160,7 @@ async function getMySegments(request: Request, env: Env): Promise<Response> {
     WHERE segments.submitter_hash = ?
   `).bind(identity).first<{ skip_count: number; helped_people: number; seconds_saved: number }>();
   return json({
-    segments: result.results.map(segmentJson),
+    segments: result.results.map((row) => segmentJson(row)),
     stats: {
       submittedCount: result.results.length,
       contributedSeconds: contributedMs / 1000,
@@ -195,19 +202,37 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
   const input = parseSegmentInput(body);
   if (!input) return json({ error: 'invalid_segment' }, 400);
   const startMs = Math.round(input.start * 1000), endMs = Math.round(input.end * 1000);
+  const idempotent = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    FROM segments WHERE submitter_hash = ? AND client_request_id = ? LIMIT 1
+  `).bind(identity, input.clientRequestId).first<SegmentRow>();
+  if (idempotent) return json({ segment: segmentJson(idempotent, true), duplicate: true, idempotent: true });
   const existing = await env.DB.prepare(`
-    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at FROM segments
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at, submitter_hash FROM segments
     WHERE video_id = ? AND category = ? AND ABS(start_ms - ?) <= 1500 AND ABS(end_ms - ?) <= 1500
     AND status != 'rejected' LIMIT 1
-  `).bind(input.videoId, input.category, startMs, endMs).first<SegmentRow>();
-  if (existing) return json({ segment: segmentJson(existing), duplicate: true });
+  `).bind(input.videoId, input.category, startMs, endMs).first<SubmitterSegmentRow>();
+  if (existing) return json({ segment: segmentJson(existing, existing.submitter_hash === identity), duplicate: true });
   const id = crypto.randomUUID(), now = new Date().toISOString();
   const videoHash = await sha256(input.videoId);
-  await env.DB.prepare(`
-    INSERT INTO segments (id, video_id, video_hash, start_ms, end_ms, duration_ms, category, status, submitter_hash, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'trusted', ?, ?, ?)
-  `).bind(id, input.videoId, videoHash, startMs, endMs, input.duration == null ? null : Math.round(input.duration * 1000), input.category, identity, now, now).run();
-  return json({ segment: { id, videoId: input.videoId, start: input.start, end: input.end, category: input.category, status: 'trusted', upvotes: 0, downvotes: 0, score: 0, createdAt: now } }, 201);
+  const inserted = await env.DB.prepare(`
+    INSERT INTO segments (
+      id, video_id, video_hash, start_ms, end_ms, duration_ms, category, status,
+      submitter_hash, client_request_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'trusted', ?, ?, ?, ?)
+    ON CONFLICT(submitter_hash, client_request_id) DO UPDATE SET
+      client_request_id = excluded.client_request_id
+    RETURNING id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+  `).bind(
+    id, input.videoId, videoHash, startMs, endMs,
+    input.duration == null ? null : Math.round(input.duration * 1000),
+    input.category, identity, input.clientRequestId, now, now,
+  ).first<SegmentRow>();
+  if (!inserted) throw new Error('segment_insert_returned_no_row');
+  if (inserted.id !== id) {
+    return json({ segment: segmentJson(inserted, true), duplicate: true, idempotent: true });
+  }
+  return json({ segment: segmentJson(inserted, true), duplicate: false, idempotent: false }, 201);
 }
 
 async function vote(request: Request, env: Env, segmentId: string): Promise<Response> {
@@ -262,11 +287,11 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url), path = url.pathname;
     try {
-      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 2 });
+      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 3 });
       const videoMatch = path.match(/^\/v1\/videos\/(\d+)\/segments$/);
       if (request.method === 'GET' && videoMatch) return getSegments(videoMatch[1], env);
       const videoHashMatch = path.match(/^\/v1\/videos\/by-hash\/([0-9a-f]{64})\/segments$/i);
-      if (request.method === 'GET' && videoHashMatch) return getSegmentsByHash(videoHashMatch[1], env);
+      if (request.method === 'GET' && videoHashMatch) return getSegmentsByHash(request, videoHashMatch[1], env);
       if (request.method === 'GET' && path === '/v1/me/segments') return getMySegments(request, env);
       if (request.method === 'POST' && path === '/v1/segments') return submitSegment(request, env);
       const voteMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/votes$/i);

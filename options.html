@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>抖音广告跳过 · 设置</title>
+  <title>抖音网页版社区片段助手 · 设置</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><img src="icons/icon-128.png" alt=""><div><strong>抖音广告跳过</strong><span>社区片段助手 · v0.5.0</span></div></div>
+      <div class="brand"><img src="icons/icon-128.png" alt=""><div><strong>抖音网页版社区片段助手</strong><span id="sidebarVersion">正在读取版本…</span></div></div>
       <nav>
         <button class="active" data-page="overview"><span>⌂</span>概览</button>
         <button data-page="segments"><span>≡</span>片段管理 <i id="navSegmentCount">0</i></button>
@@ -20,12 +20,12 @@
         <button data-page="data"><span>⇅</span>备份与恢复</button>
         <button data-page="about"><span>ⓘ</span>关于</button>
       </nav>
-      <div class="privacy">草稿保存在此浏览器<br>社区片段来自公共 API</div>
+      <div id="sidebarPrivacy" class="privacy">本地草稿只保存在此浏览器</div>
     </aside>
 
     <main class="content">
       <section class="page active" data-page="overview">
-        <div class="page-head"><div><p class="eyebrow">DASHBOARD</p><h1>跳过概览</h1><p>查看草稿、社区贡献、累计跳过和当前运行状态。</p></div><span class="status-dot">社区模式</span></div>
+        <div class="page-head"><div><p class="eyebrow">DASHBOARD</p><h1>跳过概览</h1><p>查看草稿、社区贡献、累计跳过和当前运行状态。</p></div><span id="overviewStatus" class="status-dot">仅本地</span></div>
         <div class="metric-grid">
           <article><span>已标记片段</span><strong id="metricSegments">0</strong><small>个时间片段</small></article>
           <article><span>涉及视频</span><strong id="metricVideos">0</strong><small>个抖音作品</small></article>
@@ -50,10 +50,9 @@
       </section>
 
       <section class="page" data-page="behavior">
-        <div class="page-head"><div><p class="eyebrow">BEHAVIOR</p><h1>跳过行为</h1><p>决定哪些内容自动跳过。</p></div></div>
+        <div class="page-head"><div><p class="eyebrow">BEHAVIOR</p><h1>跳过行为</h1><p>设置社区时间片段和本地草稿的处理方式。</p></div></div>
         <div class="settings-card">
-          <label class="setting-row"><div><strong>启用扩展</strong><p>控制所有自动跳过功能</p></div><input id="enabled" type="checkbox"><i></i></label>
-          <label class="setting-row"><div><strong>跳过整条广告</strong><p>识别页面上的“广告 / 商业推广”标识并切换下一条</p></div><input id="skipLabeledAds" type="checkbox"><i></i></label>
+          <label class="setting-row"><div><strong>启用扩展</strong><p>控制播放器标记、预览和时间片段跳过功能</p></div><input id="enabled" type="checkbox"><i></i></label>
           <label class="setting-row"><div><strong>跳过时间片段</strong><p>播放到本地草稿或可信社区片段时自动跳至片段末尾</p></div><input id="skipLocalSegments" type="checkbox"><i></i></label>
         </div>
       </section>
@@ -79,19 +78,30 @@
       </section>
 
       <section class="page" data-page="community">
-        <div class="page-head"><div><p class="eyebrow">COMMUNITY BETA</p><h1>社区共享</h1><p>默认连接项目公共 API；提交成功的广告片段会立即与其他用户共享。</p></div><span id="communityStatus" class="status-dot">未连接</span></div>
+        <div class="page-head"><div><p class="eyebrow">COMMUNITY BETA</p><h1>社区共享</h1><p>与其他用户共享手动标记的时间片段。未明确同意前不会连网查询。</p></div><span id="communityStatus" class="status-dot">等待选择</span></div>
+        <div id="communityConsentCard" class="consent-card">
+          <div class="consent-icon">◎</div>
+          <div class="consent-copy">
+            <strong id="consentTitle">选择社区模式</strong>
+            <p id="consentDescription">启用后，扩展会在你浏览作品时向下方 API 发送当前作品 ID 的哈希值，用于查询该作品的社区片段。不会发送完整观看历史，本地草稿只有在你主动提交时才会上传。</p>
+          </div>
+          <div class="consent-actions">
+            <button id="grantCommunityConsent" class="primary-button">同意并启用社区</button>
+            <button id="useLocalOnly" class="secondary-button">仅本地使用</button>
+          </div>
+        </div>
         <div class="settings-card">
           <div class="community-connect">
-            <div><strong>社区 API 地址</strong><p>公共 API 已随扩展授权并默认启用。只有改用自定义服务器时，Chrome 才会询问新域名的访问权限。</p></div>
-            <div class="community-input"><input id="communityApiBase" type="url" placeholder="https://your-worker.workers.dev"><button id="connectCommunity">授权并连接</button></div>
+            <div><strong>项目公共 API</strong><p>所有用户使用同一个社区服务。未同意或已撤回同意时，扩展不会访问该地址。</p></div>
+            <code id="communityApiDisplay">https://douyin-ad-skipper-api.douyin-skip-community.workers.dev</code>
           </div>
-          <label class="setting-row"><div><strong>启用社区查询</strong><p>只发送当前作品 ID，不上传完整观看历史</p></div><input id="communityEnabled" type="checkbox"><i></i></label>
+          <label class="setting-row"><div><strong>启用社区查询</strong><p>已同意时可随时暂停；启用后只发送当前作品 ID 的哈希值</p></div><input id="communityEnabled" type="checkbox"><i></i></label>
           <div class="setting-row"><div><strong>赞助 / 广告</strong><p>付费推广、推荐和直接广告</p></div><select class="category-mode" data-setting="categoryModeSponsor"><option value="auto">自动跳过</option><option value="manual">显示提示</option><option value="disabled">不处理</option></select></div>
           <div class="setting-row"><div><strong>自我推广</strong><p>作者推广自己的商品、账号或服务</p></div><select class="category-mode" data-setting="categoryModeSelfpromo"><option value="auto">自动跳过</option><option value="manual">显示提示</option><option value="disabled">不处理</option></select></div>
           <div class="setting-row"><div><strong>互动提醒</strong><p>点赞、关注、评论等简短提醒</p></div><select class="category-mode" data-setting="categoryModeInteraction"><option value="auto">自动跳过</option><option value="manual">显示提示</option><option value="disabled">不处理</option></select></div>
         </div>
-        <div class="community-actions"><button id="disconnectCommunity" class="secondary-button">恢复默认公共 API</button></div>
-        <div class="info-card"><span>隐私设计</span><p>远程查询失败时会立即回退到本地数据。扩展不会自动上传你创建的片段，只有点击播放器提交按钮或片段管理中的上传按钮时才会发送。</p></div>
+        <div class="community-actions"><button id="revokeCommunityConsent" class="danger-button">撤回社区同意</button></div>
+        <div class="info-card"><span>隐私设计</span><p>远程查询失败时会回退到本地数据。本地草稿不会自动上传；只有你点击播放器的提交按钮，或片段管理中的上传按钮时才会发送。撤回同意后会立即停止社区查询。</p></div>
       </section>
 
       <section class="page" data-page="data">
@@ -104,8 +114,8 @@
       </section>
 
       <section class="page" data-page="about">
-        <div class="page-head"><div><p class="eyebrow">ABOUT</p><h1>关于抖音广告跳过</h1><p>一个开源、社区驱动的 Chrome 扩展。</p></div></div>
-        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音广告跳过</h2><p id="extensionVersion"></p><p>支持本地片段和社区共享。社区查询默认启用，本地片段仍只会在你主动点击提交时上传。</p></div></div>
+        <div class="page-head"><div><p class="eyebrow">ABOUT</p><h1>关于抖音网页版社区片段助手</h1><p>一个开源、社区驱动的 Chrome 扩展。</p></div></div>
+        <div class="about-card"><img src="icons/icon-128.png" alt=""><div><h2>抖音网页版社区片段助手</h2><p id="extensionVersion"></p><p>支持本地时间片段和社区共享。社区查询需要你明确同意，本地草稿只会在你主动点击提交时上传。</p></div></div>
       </section>
     </main>
   </div>

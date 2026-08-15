@@ -30,9 +30,10 @@ GET /v1/videos/{videoId}/segments
 
 ```http
 GET /v1/videos/by-hash/{sha256(videoId)}/segments
+X-Client-ID: 匿名贡献者 UUID（已启用社区时）
 ```
 
-原始作品 ID 查询仅保留用于旧客户端兼容和迁移。
+带合法匿名贡献者 ID 时，每个结果额外返回 `ownedByMe`，供客户端隐藏对自己投稿的投票和举报入口；服务端不会返回提交者哈希。原始作品 ID 查询仅保留用于旧客户端兼容和迁移。
 
 ## 提交片段
 
@@ -52,7 +53,7 @@ Content-Type: application/json
 }
 ```
 
-服务端必须校验数值范围、片段长度、视频时长、重复请求和提交速率。
+服务端必须校验数值范围、片段长度、视频时长、重复请求和提交速率。`clientRequestId` 与提交者哈希组成唯一键；相同请求重试返回原片段，不会重复创建。
 
 ## 我的社区片段
 

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, agent/community-api]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -12,8 +12,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -24,6 +24,7 @@ jobs:
           node --check popup.js
           node --check options.js
           node scripts/validate-extension.mjs
+          node scripts/test-extension-logic.mjs
       - name: Install Worker dependencies
         working-directory: server
         run: npm ci
