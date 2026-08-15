@@ -4,9 +4,10 @@
   const DEFAULT_COMMUNITY_API = 'https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
   const DEFAULTS = {
     enabled: true,
-    skipLabeledAds: true,
     skipLocalSegments: true,
-    communityEnabled: true,
+    communityEnabled: false,
+    communityConsentGranted: false,
+    communityConsentPrompted: false,
     communityApiBase: DEFAULT_COMMUNITY_API,
     categoryModeSponsor: 'auto',
     categoryModeSelfpromo: 'manual',
@@ -21,13 +22,7 @@
     skippedCount: 0,
     localSegments: {},
   };
-  const AD_LABELS = new Set(['广告', '商业推广', '广告推广', '推广']);
-  const CHECK_INTERVAL_MS = 900;
-  const SKIP_COOLDOWN_MS = 3500;
-
   let settings = { ...DEFAULTS };
-  let lastSkipAt = 0;
-  let lastVideo = null;
   let draftStart = null;
   let draftVideoId = null;
   let lastSegmentSkipKey = '';
@@ -36,10 +31,11 @@
   const skipSuppressedUntil = new Map();
   const communityCache = new Map();
   const COMMUNITY_CACHE_MS = 10 * 60 * 1000;
+  const COMMUNITY_RETRY_MS = [5000, 15000, 60000, 5 * 60 * 1000];
   const CATEGORY_LABELS = { sponsor:'赞助/广告', selfpromo:'自我推广', interaction:'互动提醒' };
   const CATEGORY_SETTING_KEYS = { sponsor:'categoryModeSponsor', selfpromo:'categoryModeSelfpromo', interaction:'categoryModeInteraction' };
 
-  const log = (...args) => settings.debug && console.debug('[抖音广告跳过]', ...args);
+  const log = (...args) => settings.debug && console.debug('[抖音社区片段助手]', ...args);
 
   function isVisible(element) {
     if (!(element instanceof Element)) return false;
@@ -168,25 +164,31 @@
     }
   }
 
+  function communityRetryDelay(failureCount) {
+    return COMMUNITY_RETRY_MS[Math.min(Math.max(1, Number(failureCount) || 1) - 1, COMMUNITY_RETRY_MS.length - 1)];
+  }
+
   async function sha256Hex(value) {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
     return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   }
 
   async function loadCommunitySegments(video) {
-    if (!settings.communityEnabled) return;
+    if (!settings.communityConsentGranted || !settings.communityEnabled) return;
     const videoId = extractVideoId(video);
     const apiBase = normalizedApiBase();
     if (!videoId || !apiBase) return;
     const cached = communityCache.get(videoId);
-    if (cached && Date.now() - cached.loadedAt < COMMUNITY_CACHE_MS) return;
-    setCommunityCache(videoId, { loadedAt: Date.now(), segments: cached?.segments || [], loading: true });
+    const now = Date.now();
+    if (cached?.loading || Number(cached?.retryAt || 0) > now) return;
+    if (cached?.loadedAt && now - cached.loadedAt < COMMUNITY_CACHE_MS) return;
+    setCommunityCache(videoId, { ...cached, segments: cached?.segments || [], loading: true });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4000);
     try {
       const videoHash = await sha256Hex(videoId);
       const response = await fetch(`${apiBase}/v1/videos/by-hash/${videoHash}/segments`, {
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', 'X-Client-ID': settings.communityClientId },
         cache: 'no-store',
         signal: controller.signal,
       });
@@ -194,12 +196,19 @@
       const payload = await response.json();
       const segments = Array.isArray(payload.segments) ? payload.segments
         .filter((item) => CATEGORY_LABELS[item.category] && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
-        .map((item) => ({ start: item.start, end: item.end, category:item.category, source: 'community', id: item.id, status: item.status })) : [];
-      setCommunityCache(videoId, { loadedAt: Date.now(), segments });
+        .map((item) => ({ start: item.start, end: item.end, category:item.category, source: 'community', id: item.id, status: item.status, ownedByMe: item.ownedByMe === true })) : [];
+      setCommunityCache(videoId, { loadedAt: Date.now(), retryAt: 0, failureCount: 0, segments });
       renderPreviewBar();
       log('已加载社区片段', videoId, segments.length);
     } catch (error) {
-      setCommunityCache(videoId, { loadedAt: Date.now(), segments: cached?.segments || [] });
+      const failureCount = Number(cached?.failureCount || 0) + 1;
+      const retryDelay = communityRetryDelay(failureCount);
+      setCommunityCache(videoId, {
+        loadedAt: cached?.loadedAt || 0,
+        retryAt: Date.now() + retryDelay,
+        failureCount,
+        segments: cached?.segments || [],
+      });
       log('社区片段查询失败，继续使用本地数据', error);
     } finally {
       clearTimeout(timer);
@@ -221,48 +230,16 @@
     };
   }
 
-  function normalizedLeafText(element) {
-    if (element.children.length > 0) return '';
-    return (element.textContent || '').replace(/\s+/g, '').trim();
-  }
-
-  function findAdSignal(container) {
-    if (!container) return null;
-    const elements = [container, ...container.querySelectorAll('span, div, p, a, button')];
-    for (const element of elements) {
-      if (!isVisible(element)) continue;
-      const text = normalizedLeafText(element);
-      if (AD_LABELS.has(text)) return { type: 'label', text, element };
-
-      const aria = (element.getAttribute('aria-label') || '').replace(/\s+/g, '');
-      if (AD_LABELS.has(aria)) return { type: 'aria-label', text: aria, element };
-    }
-    return null;
-  }
-
-  function findNextButton() {
-    const selectors = [
-      '[data-e2e="arrow-right"]',
-      '[data-e2e="feed-next"]',
-      'button[aria-label="下一个视频"]',
-      'button[aria-label="下一条"]',
-      '[role="button"][aria-label="下一条"]',
-    ];
-    for (const selector of selectors) {
-      const match = [...document.querySelectorAll(selector)].find(isVisible);
-      if (match) return match;
-    }
-    return null;
-  }
-
-  function showToast(message, actions = []) {
-    if (!settings.showToast) return;
+  function displayToast(message, actions = [], required = false, persistent = false) {
+    if (!required && !settings.showToast && actions.length === 0) return;
     let toast = document.getElementById('das-toast');
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'das-toast';
       document.documentElement.appendChild(toast);
     }
+    toast.setAttribute('role', actions.length ? 'alertdialog' : 'status');
+    toast.setAttribute('aria-live', required ? 'assertive' : 'polite');
     toast.replaceChildren();
     const text = document.createElement('span');
     text.textContent = message;
@@ -285,8 +262,65 @@
     }
     toast.classList.remove('das-visible');
     requestAnimationFrame(() => toast.classList.add('das-visible'));
-    clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => toast.classList.remove('das-visible'), actions.length ? 6000 : 1800);
+    clearTimeout(displayToast.timer);
+    if (!persistent) displayToast.timer = setTimeout(() => toast.classList.remove('das-visible'), actions.length ? 8000 : 2200);
+  }
+
+  function showToast(message, actions = []) {
+    displayToast(message, actions, false);
+  }
+
+  function showRequiredToast(message, actions = [], persistent = false) {
+    displayToast(message, actions, true, persistent);
+  }
+
+  async function responseErrorCode(response) {
+    try {
+      const payload = await response.clone().json();
+      return typeof payload?.error === 'string' ? payload.error : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function communityErrorMessage(code, fallback) {
+    return ({
+      cannot_vote_own_segment: '这是你提交的片段，无需给自己的片段投票',
+      cannot_report_own_segment: '这是你提交的片段，不能举报自己的投稿',
+      rate_limited: '操作太频繁，请稍后再试',
+      segment_not_found: '该社区片段已不存在或已停止共享',
+      writes_not_configured: '社区服务暂时只读，请稍后再试',
+      invalid_client_id: '匿名贡献身份无效，请重新打开扩展',
+    })[code] || fallback;
+  }
+
+  async function chooseCommunityMode(enabled) {
+    const update = {
+      communityConsentPrompted: true,
+      communityConsentGranted: enabled === true,
+      communityEnabled: enabled === true,
+      communityApiBase: DEFAULT_COMMUNITY_API,
+    };
+    Object.assign(settings, update);
+    await chrome.storage.local.set(update);
+    if (enabled) {
+      if (!settings.communityClientId) settings.communityClientId = await getContributorId();
+      const video = getActiveVideo();
+      if (video) void loadCommunitySegments(video);
+      showRequiredToast('社区共享已启用');
+    } else {
+      communityCache.clear();
+      renderPreviewBar();
+      showRequiredToast('已选择仅本地使用，可随时在设置中启用社区');
+    }
+  }
+
+  function showCommunityConsent() {
+    if (settings.communityConsentPrompted) return;
+    showRequiredToast('启用社区会发送作品 ID 哈希和匿名贡献 ID 来查询片段；只有主动提交才上传作品 ID 与片段时间', [
+      { label: '启用社区', run: () => { void chooseCommunityMode(true); } },
+      { label: '仅本地', run: () => { void chooseCommunityMode(false); } },
+    ], true);
   }
 
   async function recordSkip(change = 1) {
@@ -384,7 +418,7 @@
     const video = getActiveVideo();
     const videoId = video && extractVideoId(video);
     if (!video || !videoId) {
-      showToast('暂时无法取得当前作品 ID');
+      showRequiredToast('暂时无法取得当前作品 ID');
       return;
     }
 
@@ -397,11 +431,11 @@
       const end = video.currentTime;
       if (draftStart === null || draftVideoId !== videoId) {
         cancelDraft();
-        showToast('当前视频已变化，请重新开始标记');
+        showRequiredToast('当前视频已变化，请重新开始标记');
         return;
       }
       if (end <= draftStart + 0.2) {
-        showToast('结束时间必须晚于开始时间');
+        showRequiredToast('结束时间必须晚于开始时间');
         return;
       }
       if (end - draftStart < 1 && !confirm('这个片段不足 1 秒，时间点可能不准确。仍然保存吗？')) return;
@@ -588,7 +622,7 @@
     const nextStart = field === 'start' ? nextValue : Number(target.start);
     const nextEnd = field === 'end' ? nextValue : Number(target.end);
     if (nextStart < 0 || nextEnd <= nextStart + 0.2 || nextEnd > (video.duration || Infinity)) {
-      showToast('调整后的片段范围无效');
+      showRequiredToast('调整后的片段范围无效');
       return;
     }
     target[field] = nextValue;
@@ -622,7 +656,7 @@
     const timer = setInterval(async () => {
       if (extractVideoId(video) !== videoId || Date.now() - startedAt > 15000) {
         clearInterval(timer);
-        if (Date.now() - startedAt > 15000) showToast('未完成预览，请保持播放至片段结束');
+        if (Date.now() - startedAt > 15000) showRequiredToast('未完成预览，请重新点击预览并保持播放器处于播放状态');
         return;
       }
       if (video.currentTime < segment.end - 0.15) return;
@@ -640,15 +674,15 @@
 
   async function submitPendingSegments(video, videoId, menu) {
     const apiBase = normalizedApiBase();
-    if (!settings.communityEnabled || !apiBase) {
-      showToast('请先在扩展选项中启用并配置社区服务');
+    if (!settings.communityConsentGranted || !settings.communityEnabled || !apiBase) {
+      showRequiredToast('请先同意并启用社区共享');
       chrome.runtime.openOptionsPage?.();
       return;
     }
     const button = menu.querySelector('[data-menu-action="submit"]');
     const pending = currentSegments(video).filter((segment) => (segment.submissionStatus || 'pending') === 'pending');
     if (!pending.length || pending.some((segment) => segment.previewed !== true)) {
-      showToast('请先预览全部待提交片段');
+      showRequiredToast('请先预览全部待提交片段');
       return;
     }
     button.disabled = true;
@@ -657,6 +691,7 @@
     const submittedSegments = new Set();
     const confirmedCommunitySegments = [];
     let submitted = 0;
+    let submissionError = '';
     for (const segment of segments) {
       if ((segment.submissionStatus || 'pending') !== 'pending') continue;
       try {
@@ -665,7 +700,7 @@
           headers: { 'Content-Type': 'application/json', 'X-Client-ID': settings.communityClientId },
           body: JSON.stringify({ videoId, start: segment.start, end: segment.end, duration: video.duration, category: segment.category || 'sponsor', clientRequestId: crypto.randomUUID() }),
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) throw new Error(communityErrorMessage(await responseErrorCode(response), '社区提交失败'));
         const payload = await response.json();
         const confirmed = payload.segment;
         if (confirmed && Number.isFinite(confirmed.start) && Number.isFinite(confirmed.end)) {
@@ -676,12 +711,14 @@
             id: confirmed.id,
             status: confirmed.status || 'trusted',
             category: confirmed.category || segment.category || 'sponsor',
+            ownedByMe: confirmed.ownedByMe === true,
           });
         }
         submittedSegments.add(segment);
         submitted += 1;
       } catch (error) {
         log('社区片段提交失败', error);
+        submissionError = error instanceof Error ? error.message : '社区提交失败';
       }
     }
     const localSegments = { ...(settings.localSegments || {}) };
@@ -698,7 +735,8 @@
     closeSubmissionMenu();
     renderPlayerControls();
     renderPreviewBar();
-    showToast(submitted ? `已提交 ${submitted} 个片段` : '提交失败，片段仍保留在本地');
+    if (submitted) showToast(`已提交 ${submitted} 个片段`);
+    else showRequiredToast(`${submissionError || '提交失败'}，片段仍保留在本地`);
   }
 
   function getVideoPlayer(video) {
@@ -806,14 +844,15 @@
       }]);
     };
     const actions = [{ label:'撤销', run:undo }];
-    if (segment.source === 'community' && segment.id) {
+    if (segment.source === 'community' && segment.id && !segment.ownedByMe) {
       actions.push(
         { label:'赞成', run:()=>voteOnSegment(segment,1) },
         { label:'反对', run:()=>voteOnSegment(segment,-1) },
         { label:'举报', run:()=>showReportChoices(segment) },
       );
     }
-    showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}`, actions);
+    const ownership = segment.ownedByMe ? ' · 你的投稿' : '';
+    showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}${ownership}`, actions);
     log(segment.source === 'community' ? '跳过社区可信片段' : '跳过本地标记片段', videoId, segment);
   }
 
@@ -834,24 +873,28 @@
   async function voteOnSegment(segment, vote) {
     const apiBase = normalizedApiBase();
     if (!apiBase || !settings.communityClientId) return;
+    if (segment.ownedByMe) {
+      showRequiredToast('这是你提交的片段，无需给自己的片段投票');
+      return;
+    }
     try {
       const response = await fetch(`${apiBase}/v1/segments/${segment.id}/votes`, {
         method:'POST', headers:{'Content-Type':'application/json','X-Client-ID':settings.communityClientId}, body:JSON.stringify({vote}),
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) throw new Error(communityErrorMessage(await responseErrorCode(response), '反馈失败，请稍后重试'));
       const result = await response.json();
       segment.status = result.status || segment.status;
       showToast(vote === 1 ? '感谢确认这个片段' : '已反馈：这个片段有问题');
     } catch (error) {
       log('片段投票失败', error);
-      showToast('反馈失败，请稍后重试');
+      showRequiredToast(error instanceof Error ? error.message : '反馈失败，请稍后重试');
     }
   }
 
   function showReportChoices(segment) {
     showToast('请选择问题类型', [
       { label:'时间错误', run:()=>reportSegment(segment,'wrong_time') },
-      { label:'不是广告', run:()=>reportSegment(segment,'not_ad') },
+      { label:'分类错误', run:()=>reportSegment(segment,'not_ad') },
       { label:'视频不符', run:()=>reportSegment(segment,'wrong_video') },
       { label:'滥用', run:()=>reportSegment(segment,'abuse') },
     ]);
@@ -860,53 +903,21 @@
   async function reportSegment(segment, reason) {
     const apiBase = normalizedApiBase();
     if (!apiBase || !settings.communityClientId) return;
+    if (segment.ownedByMe) {
+      showRequiredToast('这是你提交的片段，不能举报自己的投稿');
+      return;
+    }
     try {
       const response = await fetch(`${apiBase}/v1/segments/${segment.id}/reports`, {
         method:'POST', headers:{'Content-Type':'application/json','X-Client-ID':settings.communityClientId}, body:JSON.stringify({reason}),
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) throw new Error(communityErrorMessage(await responseErrorCode(response), '举报失败，请稍后重试'));
       await response.json();
       showToast('举报已提交，感谢帮助维护社区质量');
     } catch (error) {
       log('片段举报失败', error);
-      showToast('举报失败，请稍后重试');
+      showRequiredToast(error instanceof Error ? error.message : '举报失败，请稍后重试');
     }
-  }
-
-  function moveToNextVideo() {
-    const button = findNextButton();
-    if (button) {
-      button.click();
-      log('通过下一条按钮跳过');
-      return '按钮';
-    }
-
-    const target = document.activeElement || document.body;
-    const eventOptions = { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true };
-    target.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
-    target.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
-    window.dispatchEvent(new WheelEvent('wheel', { deltaY: Math.max(innerHeight * 0.85, 600), bubbles: true }));
-    log('通过方向键/滚轮跳过');
-    return '翻页';
-  }
-
-  async function checkCurrentVideo() {
-    if (!settings.enabled || !settings.skipLabeledAds || document.hidden || Date.now() - lastSkipAt < SKIP_COOLDOWN_MS) return;
-    const video = getActiveVideo();
-    if (!video) return;
-    if (video !== lastVideo) {
-      lastVideo = video;
-      log('检测到当前视频', video.currentSrc || video.src || '(无地址)');
-    }
-
-    const signal = findAdSignal(getVideoContainer(video));
-    if (!signal) return;
-
-    lastSkipAt = Date.now();
-    const method = moveToNextVideo();
-    await recordSkip();
-    showToast(`已跳过广告 · ${method}`);
-    log('命中广告标识', signal.type, signal.text, signal.element);
   }
 
   async function getContributorId() {
@@ -928,21 +939,42 @@
       settings = { ...settings, ...categoryModes };
       await chrome.storage.local.set(categoryModes);
     }
-    await chrome.storage.local.remove(['communitySkipMode', 'communityAutoSkipTrusted']);
-    if (!settings.communityApiBase || /^https:\/\/douyin-ad-skipper-api\.\d+\.workers\.dev\/?$/.test(settings.communityApiBase)) {
-      settings.communityApiBase = DEFAULT_COMMUNITY_API;
-      settings.communityEnabled = true;
-      await chrome.storage.local.set({ communityApiBase: DEFAULT_COMMUNITY_API, communityEnabled: true });
+    const migration = { communityApiBase: DEFAULT_COMMUNITY_API };
+    if (!Object.hasOwn(stored, 'communityConsentPrompted')) {
+      Object.assign(migration, {
+        communityConsentPrompted: false,
+        communityConsentGranted: false,
+        communityEnabled: false,
+      });
+    } else if (!settings.communityConsentGranted && settings.communityEnabled) {
+      migration.communityEnabled = false;
     }
-    settings.communityClientId = await getContributorId();
+    Object.assign(settings, migration);
+    await chrome.storage.local.set(migration);
+    await chrome.storage.local.remove(['communitySkipMode', 'communityAutoSkipTrusted', 'skipLabeledAds']);
+    if (settings.communityConsentGranted) settings.communityClientId = await getContributorId();
     log('扩展已启动', settings);
-    checkCurrentVideo();
     ensurePlayerControls();
+    showCommunityConsent();
   })();
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     for (const [key, change] of Object.entries(changes)) settings[key] = change.newValue;
+    if (changes.communityConsentPrompted?.newValue === true) {
+      clearTimeout(displayToast.timer);
+      document.getElementById('das-toast')?.classList.remove('das-visible');
+    }
+    if (changes.communityConsentGranted?.newValue === true && !settings.communityClientId) {
+      void getContributorId().then((id) => {
+        settings.communityClientId = id;
+        const video = getActiveVideo();
+        if (video && settings.communityEnabled) void loadCommunitySegments(video);
+      });
+    }
+    if (changes.communityConsentGranted?.newValue === false || changes.communityEnabled?.newValue === false) {
+      communityCache.clear();
+    }
     renderPlayerControls();
     renderPreviewBar();
   });
@@ -951,7 +983,6 @@
     schedulePlayerControls();
     clearTimeout(observer.timer);
     observer.timer = setTimeout(() => {
-      checkCurrentVideo();
       ensurePlayerControls();
     }, 180);
   });
@@ -960,7 +991,6 @@
   document.addEventListener('loadedmetadata', schedulePlayerControls, true);
   document.addEventListener('pointermove', schedulePlayerControls, { passive: true });
   document.addEventListener('keydown', handleShortcut, true);
-  setInterval(checkCurrentVideo, CHECK_INTERVAL_MS);
   setInterval(checkLocalSegments, 250);
   setInterval(schedulePlayerControls, 300);
   setInterval(renderPreviewBar, 300);

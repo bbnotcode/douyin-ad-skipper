@@ -31,6 +31,7 @@
   "status": "trusted",
   "upvotes": 2,
   "downvotes": 0,
+  "ownedByMe": false,
   "createdAt": "2026-08-05T12:00:00Z"
 }
 ```
@@ -45,3 +46,5 @@
 - `rejected`：恶意、重复或明显错误。
 
 相同作品中高度重叠的片段应复用已有记录，而不是无限创建重复记录。
+
+服务端还保存只用于幂等的 `client_request_id`，并对 `(submitter_hash, client_request_id)` 建立唯一索引。该字段不会在公共查询中返回。

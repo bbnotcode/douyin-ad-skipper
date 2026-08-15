@@ -3,9 +3,13 @@
   top: 76px;
   left: 50%;
   z-index: 2147483647;
-  padding: 10px 16px;
+  display: flex;
+  max-width: min(760px, calc(100vw - 32px));
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
+  border-radius: 12px;
   color: #fff;
   background: rgba(22, 24, 29, 0.92);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
@@ -15,6 +19,8 @@
   transform: translate(-50%, -10px);
   transition: opacity 160ms ease, transform 160ms ease;
 }
+
+#das-toast > span:first-child { min-width:0; overflow-wrap:anywhere; }
 
 #das-toast.das-visible {
   opacity: 1;
@@ -178,7 +184,7 @@
   .das-submission-actions { grid-template-columns:1fr; }
 }
 
-.das-toast-actions { display:flex; gap:6px; margin-left:12px; pointer-events:auto; }
+.das-toast-actions { display:flex; flex:none; flex-wrap:wrap; gap:6px; pointer-events:auto; }
 .das-toast-actions button { padding:4px 8px; border:1px solid rgba(255,255,255,.24); border-radius:6px; color:#fff; background:rgba(255,255,255,.1); cursor:pointer; }
 .das-toast-actions button:hover { border-color:#25f4ee; color:#25f4ee; }
 .das-toast-actions button:disabled { opacity:.55; cursor:default; }
