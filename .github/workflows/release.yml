@@ -24,10 +24,12 @@ jobs:
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           node --check content.js
+          node --check player-adapter.js
           node --check popup.js
           node --check options.js
           node scripts/validate-extension.mjs
           node scripts/test-extension-logic.mjs
+          node scripts/test-player-adapter.mjs
           node -e "const v=require('./manifest.json').version;if(process.env.GITHUB_REF_NAME!=='v'+v)throw new Error('Tag 与 manifest 版本不一致')"
       - name: Test Worker
         working-directory: server
@@ -35,7 +37,7 @@ jobs:
       - name: Build Chrome ZIP
         run: |
           mkdir -p dist/douyin-ad-skipper
-          cp manifest.json content.js content.css popup.html popup.js popup.css options.html options.js options.css LICENSE PRIVACY.md SECURITY.md dist/douyin-ad-skipper/
+          cp manifest.json player-adapter.js content.js content.css popup.html popup.js popup.css options.html options.js options.css LICENSE PRIVACY.md SECURITY.md dist/douyin-ad-skipper/
           mkdir -p dist/douyin-ad-skipper/icons
           cp icons/icon-16.png icons/icon-32.png icons/icon-48.png icons/icon-128.png dist/douyin-ad-skipper/icons/
           cd dist/douyin-ad-skipper

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseSegmentInput, statusFromVotes } from '../src/validation.ts';
+import { clusterSegments, parseSegmentInput, parseSegmentRevisionInput, segmentsAreSimilar, statusFromVotes } from '../src/validation.ts';
 import { segmentJson } from '../src/index.ts';
 
 test('accepts a valid sponsor segment', () => {
@@ -39,4 +39,24 @@ test('trusts submissions immediately and disputes bad segments', () => {
   assert.equal(statusFromVotes(2,0), 'trusted');
   assert.equal(statusFromVotes(3,1), 'trusted');
   assert.equal(statusFromVotes(1,2), 'disputed');
+});
+
+test('validates owner revisions without accepting invalid ranges', () => {
+  assert.deepEqual(parseSegmentRevisionInput({ start: 5.2, end: 12.8, duration: 30, category: 'selfpromo' }), {
+    start: 5.2, end: 12.8, duration: 30, category: 'selfpromo',
+  });
+  assert.equal(parseSegmentRevisionInput({ start: 12, end: 5, category: 'sponsor' }), null);
+  assert.equal(parseSegmentRevisionInput({ start: 5, end: 12, category: 'unknown' }), null);
+});
+
+test('clusters similar submissions but keeps different categories separate', () => {
+  const base = { status: 'trusted', upvotes: 0, downvotes: 0 };
+  const first = { ...base, id: 'a', start_ms: 10_000, end_ms: 20_000, category: 'sponsor' };
+  const close = { ...base, id: 'b', start_ms: 11_000, end_ms: 21_000, category: 'sponsor', upvotes: 3 };
+  const other = { ...base, id: 'c', start_ms: 11_000, end_ms: 21_000, category: 'selfpromo' };
+  assert.equal(segmentsAreSimilar(first, close), true);
+  const clusters = clusterSegments([first, close, other]);
+  assert.equal(clusters.length, 2);
+  assert.equal(clusters.find((item) => item.category === 'sponsor')?.id, 'b');
+  assert.equal(clusters.find((item) => item.category === 'sponsor')?.clusterSize, 2);
 });

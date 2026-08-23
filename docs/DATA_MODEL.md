@@ -32,6 +32,7 @@
   "upvotes": 2,
   "downvotes": 0,
   "ownedByMe": false,
+  "clusterSize": 2,
   "createdAt": "2026-08-05T12:00:00Z"
 }
 ```
@@ -48,3 +49,5 @@
 相同作品中高度重叠的片段应复用已有记录，而不是无限创建重复记录。
 
 服务端还保存只用于幂等的 `client_request_id`，并对 `(submitter_hash, client_request_id)` 建立唯一索引。该字段不会在公共查询中返回。
+
+`segment_revisions` 保存投稿者对云端片段执行的修改或撤回操作，包括修改前后的时间和分类。撤回采用 `rejected` 状态而不是直接删除主记录；修改会清理旧投票、举报和帮助统计，使反馈只对应最新边界。

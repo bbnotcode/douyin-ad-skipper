@@ -36,13 +36,15 @@ curl http://localhost:8787/v1/videos/7669344658548047311/segments
 - `GET /v1/videos/by-hash/:sha256/segments`
 - `GET /v1/me/segments`
 - `POST /v1/segments`
+- `PATCH /v1/me/segments/:segmentId`
+- `DELETE /v1/me/segments/:segmentId`
 - `POST /v1/segments/:segmentId/votes`
 - `POST /v1/segments/:segmentId/reports`
 - `POST /v1/segments/:segmentId/skips`
 
 写请求和需要识别“自己的投稿”的查询必须携带随机生成的 `X-Client-ID`。服务端使用加盐哈希保存稳定的匿名贡献身份，不保存客户端 ID 原值；来源 IP 会单独加盐哈希，仅用于第二层限流和基础设施安全，不参与贡献身份。`X-Client-ID` 不是登录凭证。
 
-写接口的 JSON 请求体最大为 8 KiB，并同时按匿名身份和来源 IP 限流。提交使用 `(submitter_hash, client_request_id)` 唯一约束保证网络重试幂等。D1 中的限流桶会抽样清理超过 48 小时的数据。生产部署前应先导出 D1 备份，再应用迁移。
+写接口的 JSON 请求体最大为 8 KiB，并同时按匿名身份和来源 IP 限流。提交使用 `(submitter_hash, client_request_id)` 唯一约束保证网络重试幂等。相似投稿在查询阶段聚合；投稿者修改或撤回时会写入 `segment_revisions`，修改会重置旧反馈和帮助统计。D1 中的限流桶会抽样清理超过 48 小时的数据。生产部署前应先导出 D1 备份，再应用迁移。
 
 ## 可信规则（初版）
 

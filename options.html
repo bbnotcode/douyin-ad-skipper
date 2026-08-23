@@ -13,6 +13,7 @@
       <nav>
         <button class="active" data-page="overview"><span>⌂</span>概览</button>
         <button data-page="segments"><span>≡</span>片段管理 <i id="navSegmentCount">0</i></button>
+        <button data-page="contributions"><span>↗</span>贡献中心 <i id="navContributionCount">0</i></button>
         <button data-page="behavior"><span>▶</span>跳过行为</button>
         <button data-page="community"><span>◎</span>社区共享</button>
         <button data-page="appearance"><span>◐</span>界面与提示</button>
@@ -35,7 +36,7 @@
         <div class="community-impact-card">
           <div class="impact-mark">↗</div>
           <div><span>社区贡献</span><strong>你的片段已实际帮大家节省 <b id="metricContributionDuration">0 秒</b></strong><small id="metricContributionCount">帮助 0 人跳过 0 次 · 已提交 0 个片段</small></div>
-          <button class="text-button" data-goto="segments">查看贡献 →</button>
+          <button class="text-button" data-goto="contributions">查看贡献 →</button>
         </div>
         <div class="panel">
           <div class="panel-head"><div><h2>最近片段</h2><p>本地草稿与已提交的社区片段</p></div><button class="text-button" data-goto="segments">查看全部 →</button></div>
@@ -47,6 +48,18 @@
         <div class="page-head"><div><p class="eyebrow">SEGMENT LIBRARY</p><h1>片段管理</h1><p>查看云端贡献，或编辑、预览、上传和删除本地草稿。</p></div></div>
         <div class="toolbar"><label class="search"><span>⌕</span><input id="segmentSearch" placeholder="搜索视频标题、作者或作品 ID"></label><div class="toolbar-actions"><span id="segmentSummary"></span><button id="uploadAllSegments" class="upload-all-button">上传全部待提交</button></div></div>
         <div id="segmentList" class="segment-list"></div>
+      </section>
+
+      <section class="page" data-page="contributions">
+        <div class="page-head"><div><p class="eyebrow">COMMUNITY IMPACT</p><h1>社区贡献中心</h1><p>查看投稿状态、收到的反馈和实际帮助，并管理自己的云端片段。</p></div><button id="refreshContributions" class="secondary-button compact-button">刷新数据</button></div>
+        <div class="metric-grid contribution-metrics">
+          <article><span>云端投稿</span><strong id="contributionSubmitted">0</strong><small>个有效片段</small></article>
+          <article><span>帮助用户</span><strong id="contributionPeople">0</strong><small>位去重用户</small></article>
+          <article><span>累计节省</span><strong id="contributionSaved">0 秒</strong><small>实际跳过时长</small></article>
+          <article><span>社区反馈</span><strong id="contributionVotes">0 / 0</strong><small>赞成 / 反对</small></article>
+        </div>
+        <div class="panel contribution-summary"><span id="contributionHealth">目前没有争议投稿</span><p>修改云端片段会清空其旧投票与帮助统计，确保反馈只对应最新时间范围；撤回后将立即停止向其他用户分发。</p></div>
+        <div id="contributionList" class="contribution-list"></div>
       </section>
 
       <section class="page" data-page="behavior">
@@ -64,6 +77,7 @@
           <label class="setting-row"><div><strong>调试日志</strong><p>将视频识别、按钮挂载与跳过过程输出到网页控制台</p></div><input id="debug" type="checkbox"><i></i></label>
         </div>
         <div class="info-card"><span>提示</span><p>播放器标记按钮会嵌入清晰度按钮左侧。点击一次开始创建，再点击青色结束按钮即可保存；红色按钮用于取消。</p></div>
+        <div class="diagnostic-card"><div><strong>播放器适配诊断</strong><p id="diagnosticSummary">尚未收到播放器检测结果</p></div><button id="copyDiagnostics" class="secondary-button compact-button">复制脱敏诊断</button></div>
       </section>
 
       <section class="page" data-page="shortcuts">
@@ -119,6 +133,16 @@
       </section>
     </main>
   </div>
+  <dialog id="cloudEditDialog" class="cloud-edit-dialog">
+    <form method="dialog" id="cloudEditForm">
+      <header><div><strong>修改云端片段</strong><span id="cloudEditVideo"></span></div><button type="button" data-dialog-close aria-label="关闭">×</button></header>
+      <p>修改后旧投票与帮助统计会清空，请再次确认片段边界。</p>
+      <label>开始时间（秒或 分:秒）<input id="cloudEditStart" required></label>
+      <label>结束时间（秒或 分:秒）<input id="cloudEditEnd" required></label>
+      <label>片段分类<select id="cloudEditCategory"><option value="sponsor">赞助/广告</option><option value="selfpromo">自我推广</option><option value="interaction">互动提醒</option></select></label>
+      <div class="dialog-actions"><button type="button" data-dialog-close class="secondary-button">取消</button><button id="saveCloudEdit" type="submit" class="primary-button">保存修改</button></div>
+    </form>
+  </dialog>
   <div id="optionsToast" role="status"></div>
   <script src="options.js"></script>
 </body>

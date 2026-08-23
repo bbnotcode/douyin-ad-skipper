@@ -4,7 +4,8 @@ const DEFAULTS = { enabled:true, skipLocalSegments:true, showToast:true, debug:f
 let state = { ...DEFAULTS };
 let capturingShortcut='';
 let communitySegments = [];
-let communityStats = { submittedCount:0, contributedSeconds:0, skipCount:0, helpedPeople:0, secondsSaved:0 };
+let communityStats = { submittedCount:0, contributedSeconds:0, skipCount:0, helpedPeople:0, secondsSaved:0, receivedUpvotes:0, receivedDownvotes:0, disputedCount:0 };
+let editingCommunitySegmentId='';
 
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
@@ -21,7 +22,8 @@ const allSegments = () => [...localSegmentItems(), ...communitySegments];
 function showPage(name) {
   document.querySelectorAll('[data-page]').forEach((element) => element.classList.toggle('active', element.dataset.page === name));
   history.replaceState(null,'',`#${name}`);
-  if (name === 'segments') { renderSegments(); fetchMyContributions(); }
+  if (name === 'segments') renderSegments();
+  if (name === 'contributions') { renderContributions(); void fetchMyContributions(); }
 }
 
 function toast(message) {
@@ -45,8 +47,40 @@ function renderOverview() {
   $('#metricContributionDuration').textContent = formatContribution(communityStats.secondsSaved);
   $('#metricContributionCount').textContent = `帮助 ${communityStats.helpedPeople} 人跳过 ${communityStats.skipCount} 次 · 已提交 ${communityStats.submittedCount} 个片段`;
   $('#navSegmentCount').textContent = segments.length;
+  $('#navContributionCount').textContent = communityStats.submittedCount;
   const recent = [...segments].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,5);
   $('#recentSegments').innerHTML = recent.length ? recent.map((item) => `<div class="recent-item"><div><strong>${escapeHtml(segmentTitle(item))}</strong><span>${escapeHtml(segmentAuthor(item))} · ${formatTime(item.start)}–${formatTime(item.end)}</span></div><span>${item.createdAt ? new Date(item.createdAt).toLocaleDateString('zh-CN') : '旧版片段'}</span></div>`).join('') : '<div class="empty">还没有创建片段。请在抖音播放器控制栏点击标记图标。</div>';
+}
+
+function communityStatusLabel(status) {
+  return ({trusted:'正常共享',candidate:'等待确认',disputed:'存在争议',rejected:'已撤回'})[status] || '社区保存';
+}
+
+function renderContributions() {
+  $('#contributionSubmitted').textContent=communityStats.submittedCount;
+  $('#contributionPeople').textContent=communityStats.helpedPeople;
+  $('#contributionSaved').textContent=formatContribution(communityStats.secondsSaved);
+  $('#contributionVotes').textContent=`${communityStats.receivedUpvotes} / ${communityStats.receivedDownvotes}`;
+  $('#contributionHealth').textContent=communityStats.disputedCount
+    ? `${communityStats.disputedCount} 个投稿存在争议，建议检查时间或分类`
+    : '目前没有争议投稿';
+  $('#contributionList').innerHTML=communitySegments.length ? communitySegments.map((item)=>`
+    <article class="contribution-item ${item.status==='disputed'?'is-disputed':''}">
+      <div class="contribution-main">
+        <div><strong>${escapeHtml(segmentTitle(item))}</strong><span>ID ${escapeHtml(item.videoId)} · ${new Date(item.updatedAt||item.createdAt).toLocaleString('zh-CN')}</span></div>
+        <em>${communityStatusLabel(item.status)}</em>
+      </div>
+      <div class="contribution-details">
+        <span class="time-range">${formatTime(item.start)} → ${formatTime(item.end)}</span>
+        <span>${CATEGORY_LABELS[item.category]||'片段'}</span>
+        <span>赞成 ${Number(item.upvotes||0)} · 反对 ${Number(item.downvotes||0)}</span>
+      </div>
+      <div class="contribution-actions">
+        <a href="https://www.douyin.com/video/${escapeHtml(item.videoId)}" target="_blank" rel="noopener noreferrer">打开作品</a>
+        <button class="edit-cloud-button" data-community-id="${escapeHtml(item.id)}">修改</button>
+        <button class="withdraw-cloud-button" data-community-id="${escapeHtml(item.id)}">撤回</button>
+      </div>
+    </article>`).join('') : '<div class="panel empty">还没有云端投稿。完成预览后，可以从播放器或片段管理上传。</div>';
 }
 
 function renderSegments() {
@@ -87,7 +121,7 @@ async function fetchMyContributions() {
     if(!response.ok)throw new Error(`HTTP ${response.status}`);
     const payload=await response.json();
     communitySegments=Array.isArray(payload.segments)?payload.segments.map((segment)=>({...segment,storageSource:'community',submissionStatus:'submitted'})):[];
-    communityStats={submittedCount:Number(payload.stats?.submittedCount||0),contributedSeconds:Number(payload.stats?.contributedSeconds||0),skipCount:Number(payload.stats?.skipCount||0),helpedPeople:Number(payload.stats?.helpedPeople||0),secondsSaved:Number(payload.stats?.secondsSaved||0)};
+    communityStats={submittedCount:Number(payload.stats?.submittedCount||0),contributedSeconds:Number(payload.stats?.contributedSeconds||0),skipCount:Number(payload.stats?.skipCount||0),helpedPeople:Number(payload.stats?.helpedPeople||0),secondsSaved:Number(payload.stats?.secondsSaved||0),receivedUpvotes:Number(payload.stats?.receivedUpvotes||0),receivedDownvotes:Number(payload.stats?.receivedDownvotes||0),disputedCount:Number(payload.stats?.disputedCount||0)};
     const remoteIds=new Set(communitySegments.map((item)=>item.id));
     const remoteTimes=new Set(communitySegments.map((item)=>`${item.videoId}:${Number(item.start).toFixed(3)}:${Number(item.end).toFixed(3)}`));
     let changed=false;const localSegments={};
@@ -99,8 +133,50 @@ async function fetchMyContributions() {
       if(kept.length)localSegments[videoId]=kept;
     }
     if(changed){state.localSegments=localSegments;await chrome.storage.local.set({localSegments})}
-    renderOverview();renderSegments();
+    renderOverview();renderSegments();renderContributions();
   }catch(error){console.error('[抖音社区片段助手] 获取我的社区片段失败',error)}
+}
+
+async function communityFailureMessage(response,fallback) {
+  try {
+    const payload=await response.json();
+    return ({segment_not_found_or_not_owned:'片段不存在，或不属于当前匿名贡献身份',similar_segment_exists:'已有时间和分类非常接近的社区片段',invalid_segment_revision:'时间或分类无效',rate_limited:'操作太频繁，请稍后再试'})[payload.error]||fallback;
+  } catch { return fallback; }
+}
+
+function openCloudEditor(segmentId) {
+  const segment=communitySegments.find((item)=>item.id===segmentId);if(!segment)return;
+  editingCommunitySegmentId=segmentId;
+  $('#cloudEditVideo').textContent=`作品 ${segment.videoId}`;
+  $('#cloudEditStart').value=Number(segment.start).toFixed(1);
+  $('#cloudEditEnd').value=Number(segment.end).toFixed(1);
+  $('#cloudEditCategory').value=segment.category||'sponsor';
+  $('#cloudEditDialog').showModal();
+}
+
+async function saveCloudEdit() {
+  const segment=communitySegments.find((item)=>item.id===editingCommunitySegmentId);if(!segment)return false;
+  const start=parseTimeInput($('#cloudEditStart').value),end=parseTimeInput($('#cloudEditEnd').value),category=$('#cloudEditCategory').value;
+  if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start+0.2||end-start>600||!CATEGORY_LABELS[category]){toast('时间或分类无效');return false}
+  const button=$('#saveCloudEdit');button.disabled=true;button.textContent='保存中…';
+  try {
+    const response=await fetch(`${DEFAULT_COMMUNITY_API}/v1/me/segments/${encodeURIComponent(segment.id)}`,{
+      method:'PATCH',headers:{'Content-Type':'application/json','X-Client-ID':state.communityClientId},body:JSON.stringify({start,end,category}),
+    });
+    if(!response.ok)throw new Error(await communityFailureMessage(response,'云端片段修改失败'));
+    $('#cloudEditDialog').close();await fetchMyContributions();toast('云端片段已修改，旧反馈已重置');return true;
+  } catch(error){toast(error instanceof Error?error.message:'云端片段修改失败');return false}
+  finally{button.disabled=false;button.textContent='保存修改'}
+}
+
+async function withdrawCloudSegment(segmentId) {
+  const segment=communitySegments.find((item)=>item.id===segmentId);if(!segment)return;
+  if(!confirm(`确定撤回 ${formatTime(segment.start)}–${formatTime(segment.end)} 的云端片段吗？撤回后其他用户将不再收到它。`))return;
+  try {
+    const response=await fetch(`${DEFAULT_COMMUNITY_API}/v1/me/segments/${encodeURIComponent(segment.id)}`,{method:'DELETE',headers:{'X-Client-ID':state.communityClientId}});
+    if(!response.ok)throw new Error(await communityFailureMessage(response,'云端片段撤回失败'));
+    await fetchMyContributions();toast('云端片段已撤回');
+  } catch(error){toast(error instanceof Error?error.message:'云端片段撤回失败')}
 }
 
 async function deleteSegment(videoId,index) {
@@ -227,6 +303,22 @@ function syncSettings() {
   document.querySelectorAll('.category-mode').forEach((select)=>{select.value=state[select.dataset.setting]||DEFAULTS[select.dataset.setting]});
   document.querySelectorAll('.shortcut-capture').forEach((button)=>{button.textContent=formatShortcut(state[button.dataset.setting]||DEFAULTS[button.dataset.setting])});
   renderCommunityStatus();
+  renderDiagnostic();
+}
+
+function renderDiagnostic() {
+  const item=state.lastAdapterDiagnostic;
+  $('#diagnosticSummary').textContent=item
+    ? `${item.reason==='mounted'?'播放器按钮已挂载':'需要关注：'+item.reason} · ${new Date(item.recordedAt).toLocaleString('zh-CN')}`
+    : '尚未收到播放器检测结果，请先打开一个抖音作品';
+}
+
+async function copyDiagnostics() {
+  const item=state.lastAdapterDiagnostic;
+  if(!item){toast('暂无诊断信息，请先打开一个抖音作品');return}
+  const report={product:'抖音网页版社区片段助手',...item,userAgent:navigator.userAgent.replace(/\([^)]*\)/,'(已脱敏)')};
+  try{await navigator.clipboard.writeText(JSON.stringify(report,null,2));toast('脱敏诊断已复制，可粘贴到 GitHub Issue')}
+  catch{toast('复制失败，请检查浏览器剪贴板权限')}
 }
 
 function shortcutSignature(event){return [event.ctrlKey?'Ctrl':'',event.altKey?'Alt':'',event.shiftKey?'Shift':'',event.metaKey?'Meta':'',event.code].filter(Boolean).join('+')}
@@ -254,7 +346,7 @@ async function setCommunityConsent(granted) {
   const update={communityConsentPrompted:true,communityConsentGranted:granted===true,communityEnabled:granted===true,communityApiBase:DEFAULT_COMMUNITY_API};
   Object.assign(state,update);
   if(granted&&!state.communityClientId)state.communityClientId=await getContributorId();
-  if(!granted){communitySegments=[];communityStats={submittedCount:0,contributedSeconds:0,skipCount:0,helpedPeople:0,secondsSaved:0}}
+  if(!granted){communitySegments=[];communityStats={submittedCount:0,contributedSeconds:0,skipCount:0,helpedPeople:0,secondsSaved:0,receivedUpvotes:0,receivedDownvotes:0,disputedCount:0}}
   await chrome.storage.local.set(update);
   syncSettings();renderOverview();renderSegments();
   if(granted)await fetchMyContributions();
@@ -288,6 +380,7 @@ $('#communityEnabled').addEventListener('change',async(event)=>{
 $('#grantCommunityConsent').addEventListener('click',()=>{void setCommunityConsent(true)});
 $('#useLocalOnly').addEventListener('click',()=>{void setCommunityConsent(false)});
 $('#revokeCommunityConsent').addEventListener('click',()=>{void setCommunityConsent(false)});
+$('#copyDiagnostics').addEventListener('click',()=>{void copyDiagnostics()});
 $('#segmentSearch').addEventListener('input',renderSegments);
 $('#segmentList').addEventListener('click',async(event)=>{
   const adjustButton=event.target.closest('[data-adjust]');if(adjustButton){await adjustSegment(adjustButton.dataset.videoId,Number(adjustButton.dataset.index),adjustButton.dataset.adjust,Number(adjustButton.dataset.delta));return}
@@ -300,11 +393,18 @@ $('#segmentList').addEventListener('change',async(event)=>{
   const videoId=select.dataset.videoId;const index=Number(select.dataset.index);if(!state.localSegments?.[videoId]?.[index])return;
   await updateLocalSegment(videoId,index,{category:select.value},'片段分类已保存');
 });
+$('#contributionList').addEventListener('click',(event)=>{
+  const edit=event.target.closest('.edit-cloud-button');if(edit){openCloudEditor(edit.dataset.communityId);return}
+  const withdraw=event.target.closest('.withdraw-cloud-button');if(withdraw)void withdrawCloudSegment(withdraw.dataset.communityId);
+});
+$('#refreshContributions').addEventListener('click',()=>{void fetchMyContributions()});
+$('#cloudEditForm').addEventListener('submit',(event)=>{event.preventDefault();void saveCloudEdit()});
+document.querySelectorAll('[data-dialog-close]').forEach((button)=>button.addEventListener('click',()=>$('#cloudEditDialog').close()));
 $('#uploadAllSegments').addEventListener('click',uploadAllPending);
 $('#exportData').addEventListener('click',exportData);
 $('#importData').addEventListener('click',()=>$('#importFile').click());
 $('#importFile').addEventListener('change',(event)=>{if(event.target.files[0])importData(event.target.files[0]);event.target.value=''});
 $('#clearSegments').addEventListener('click',async()=>{if(confirm('确定清空所有本地片段吗？此操作无法撤销。')){state.localSegments={};await chrome.storage.local.set({localSegments:{}});renderOverview();renderSegments();toast('本地片段已清空')}});
 
-(async()=>{const stored=await chrome.storage.local.get(null);state={...DEFAULTS,...stored};if(!Object.hasOwn(stored,'categoryModeSponsor')){const legacyMode=['auto','manual','disabled'].includes(stored.communitySkipMode)?stored.communitySkipMode:'auto';const categoryModes={categoryModeSponsor:legacyMode,categoryModeSelfpromo:legacyMode,categoryModeInteraction:legacyMode};state={...state,...categoryModes};await chrome.storage.local.set(categoryModes)}const migration={communityApiBase:DEFAULT_COMMUNITY_API};if(!Object.hasOwn(stored,'communityConsentPrompted'))Object.assign(migration,{communityConsentPrompted:false,communityConsentGranted:false,communityEnabled:false});else if(!state.communityConsentGranted&&state.communityEnabled)migration.communityEnabled=false;Object.assign(state,migration);await chrome.storage.local.set(migration);await chrome.storage.local.remove(['communitySkipMode','communityAutoSkipTrusted','skipLabeledAds']);if(state.communityConsentGranted)state.communityClientId=await getContributorId();const version=chrome.runtime.getManifest().version;$('#extensionVersion').textContent=`版本 ${version}`;$('#sidebarVersion').textContent=`社区片段助手 · v${version}`;syncSettings();renderOverview();renderSegments();showPage(location.hash.slice(1)||'overview');if(state.communityConsentGranted&&state.communityEnabled)await fetchMyContributions()})();
+(async()=>{const stored=await chrome.storage.local.get(null);state={...DEFAULTS,...stored};if(!Object.hasOwn(stored,'categoryModeSponsor')){const legacyMode=['auto','manual','disabled'].includes(stored.communitySkipMode)?stored.communitySkipMode:'auto';const categoryModes={categoryModeSponsor:legacyMode,categoryModeSelfpromo:legacyMode,categoryModeInteraction:legacyMode};state={...state,...categoryModes};await chrome.storage.local.set(categoryModes)}const migration={communityApiBase:DEFAULT_COMMUNITY_API};if(!Object.hasOwn(stored,'communityConsentPrompted'))Object.assign(migration,{communityConsentPrompted:false,communityConsentGranted:false,communityEnabled:false});else if(!state.communityConsentGranted&&state.communityEnabled)migration.communityEnabled=false;Object.assign(state,migration);await chrome.storage.local.set(migration);await chrome.storage.local.remove(['communitySkipMode','communityAutoSkipTrusted','skipLabeledAds']);if(state.communityConsentGranted)state.communityClientId=await getContributorId();const version=chrome.runtime.getManifest().version;$('#extensionVersion').textContent=`版本 ${version}`;$('#sidebarVersion').textContent=`社区片段助手 · v${version}`;syncSettings();renderOverview();renderSegments();renderContributions();showPage(location.hash.slice(1)||'overview');if(state.communityConsentGranted&&state.communityEnabled)await fetchMyContributions()})();
 chrome.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;for(const [key,change] of Object.entries(changes))state[key]=change.newValue;syncSettings();renderOverview()});
