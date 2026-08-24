@@ -4,9 +4,11 @@ import vm from 'node:vm';
 
 const content = await readFile(new URL('../content.js', import.meta.url), 'utf8');
 const options = await readFile(new URL('../options.js', import.meta.url), 'utf8');
+const optionsHtml = await readFile(new URL('../options.html', import.meta.url), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 const worker = await readFile(new URL('../server/src/index.ts', import.meta.url), 'utf8');
 const idempotencyMigration = await readFile(new URL('../server/migrations/0007_idempotent_submissions.sql', import.meta.url), 'utf8');
+const revisionMigration = await readFile(new URL('../server/migrations/0008_segment_revisions.sql', import.meta.url), 'utf8');
 
 assert.doesNotMatch(content, /settings\.skipLabeledAds|const AD_LABELS|function checkCurrentVideo/, '不得恢复整条平台广告识别');
 assert.doesNotMatch(options, /chrome\.permissions|state\.skipLabeledAds|skipLabeledAds:/, '选项页不得申请任意 API 域名或恢复旧广告开关');
@@ -29,5 +31,12 @@ assert.match(content, /failureCount[\s\S]*retryAt/, '查询失败必须使用短
 assert.match(worker, /ownedByMe/, '服务端查询必须返回当前匿名投稿归属');
 assert.match(worker, /ON CONFLICT\(submitter_hash, client_request_id\)/, '投稿必须按请求 ID 幂等写入');
 assert.match(idempotencyMigration, /CREATE UNIQUE INDEX[\s\S]*submitter_hash, client_request_id/, 'D1 必须有投稿幂等唯一索引');
+assert.match(worker, /clusterSegments/, '社区查询必须聚合相似投稿');
+assert.match(worker, /request\.method === 'PATCH'/, '投稿者必须能修改自己的云端片段');
+assert.match(worker, /request\.method === 'DELETE'/, '投稿者必须能撤回自己的云端片段');
+assert.match(revisionMigration, /CREATE TABLE IF NOT EXISTS segment_revisions/, 'D1 必须记录云端片段修订历史');
+assert.match(options, /copyDiagnostics/, '选项页必须提供脱敏适配诊断');
+assert.doesNotMatch(content, /pathShape:\s*location\.pathname/, '诊断不得保存原始页面路径');
+assert.match(optionsHtml, /type="button" data-dialog-close/, '云端编辑取消按钮不得触发表单保存');
 
 console.log('扩展行为契约测试通过');

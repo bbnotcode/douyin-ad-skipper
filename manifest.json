@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "抖音网页版社区片段助手",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "标记、预览和跳过抖音网页版普通作品中的社区时间片段。",
   "icons": {
     "16": "icons/icon-16.png",
@@ -30,7 +30,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.douyin.com/*"],
-      "js": ["content.js"],
+      "js": ["player-adapter.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

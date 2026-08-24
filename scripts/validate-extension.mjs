@@ -13,7 +13,7 @@ assert.deepEqual(manifest.host_permissions, [
 assert.equal(manifest.optional_host_permissions, undefined, '公共版不得申请任意 HTTPS 域名权限');
 
 const requiredFiles = new Set([
-  'content.js', 'content.css', 'popup.html', 'popup.js', 'popup.css',
+  'player-adapter.js', 'content.js', 'content.css', 'popup.html', 'popup.js', 'popup.css',
   'options.html', 'options.js', 'options.css', 'PRIVACY.md', 'SECURITY.md',
 ]);
 for (const file of requiredFiles) await access(new URL(`../${file}`, import.meta.url));
@@ -26,6 +26,8 @@ const changelog = await readFile(new URL('../CHANGELOG.md', import.meta.url), 'u
 assert.match(changelog, new RegExp(`^## ${manifest.version.replaceAll('.', '\\.')}(?: |$)`, 'm'), 'CHANGELOG 缺少当前版本');
 
 const source = await readFile(new URL('../content.js', import.meta.url), 'utf8');
+const adapterSource = await readFile(new URL('../player-adapter.js', import.meta.url), 'utf8');
 assert(!/\beval\s*\(|new\s+Function\s*\(/.test(source), '内容脚本禁止动态执行代码');
+assert(!/\beval\s*\(|new\s+Function\s*\(/.test(adapterSource), '播放器适配脚本禁止动态执行代码');
 assert(!/settings\.skipLabeledAds|const AD_LABELS|function checkCurrentVideo/.test(source), '不得恢复整条平台广告识别');
 console.log(`扩展校验通过 v${manifest.version}`);

@@ -1,4 +1,12 @@
-import { REPORT_REASONS, VIDEO_ID_PATTERN, parseSegmentInput, statusFromVotes } from './validation.ts';
+import {
+  REPORT_REASONS,
+  VIDEO_ID_PATTERN,
+  clusterSegments,
+  parseSegmentInput,
+  parseSegmentRevisionInput,
+  segmentsAreSimilar,
+  statusFromVotes,
+} from './validation.ts';
 
 interface Env {
   DB: D1Database;
@@ -7,7 +15,8 @@ interface Env {
 
 type SegmentRow = {
   id: string; video_id: string; start_ms: number; end_ms: number; category: string;
-  status: string; upvotes: number; downvotes: number; created_at: string;
+  status: string; upvotes: number; downvotes: number; created_at: string; updated_at?: string;
+  duration_ms?: number | null;
 };
 
 type OwnedSegmentRow = SegmentRow & { owned_by_me: number };
@@ -16,7 +25,7 @@ type SubmitterSegmentRow = SegmentRow & { submitter_hash: string };
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type, X-Client-ID',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
   'Access-Control-Max-Age': '86400',
   'X-Content-Type-Options': 'nosniff',
 };
@@ -103,12 +112,13 @@ async function withinRateLimit(env: Env, identity: string, action: string, limit
   return Boolean(row && row.count <= limit);
 }
 
-export function segmentJson(row: SegmentRow, ownedByMe?: boolean) {
+export function segmentJson(row: SegmentRow, ownedByMe?: boolean, cluster?: { clusterSize: number }) {
   const segment = {
     id: row.id, videoId: row.video_id, start: row.start_ms / 1000, end: row.end_ms / 1000,
     category: row.category, status: row.status, upvotes: row.upvotes, downvotes: row.downvotes,
     score: row.upvotes + row.downvotes ? row.upvotes / (row.upvotes + row.downvotes) : 0,
-    createdAt: row.created_at,
+    createdAt: row.created_at, updatedAt: row.updated_at || row.created_at,
+    ...(cluster && cluster.clusterSize > 1 ? cluster : {}),
   };
   return ownedByMe === undefined ? segment : { ...segment, ownedByMe };
 }
@@ -119,10 +129,11 @@ async function getSegments(videoId: string, env: Env): Promise<Response> {
   await env.DB.prepare('UPDATE segments SET video_hash = ? WHERE video_id = ? AND video_hash IS NULL')
     .bind(videoHash, videoId).run();
   const result = await env.DB.prepare(`
-    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at, updated_at
     FROM segments WHERE video_id = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
   `).bind(videoId).all<SegmentRow>();
-  return json({ videoId, segments: result.results.map((row) => segmentJson(row)) });
+  const clusters = clusterSegments(result.results);
+  return json({ videoId, segments: clusters.map((row) => segmentJson(row, undefined, { clusterSize: row.clusterSize })) });
 }
 
 async function getSegmentsByHash(request: Request, videoHash: string, env: Env): Promise<Response> {
@@ -130,13 +141,17 @@ async function getSegmentsByHash(request: Request, videoHash: string, env: Env):
   const identity = await contributorHash(request, env);
   const ownershipIdentity = identity || '';
   const result = await env.DB.prepare(`
-    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at,
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at, updated_at,
       CASE WHEN ? != '' AND submitter_hash = ? THEN 1 ELSE 0 END AS owned_by_me
     FROM segments WHERE video_hash = ? AND status IN ('candidate', 'trusted') ORDER BY start_ms ASC LIMIT 200
   `).bind(ownershipIdentity, ownershipIdentity, videoHash.toLowerCase()).all<OwnedSegmentRow>();
-  const segments = result.results.map((row) => {
+  const segments = clusterSegments(result.results).map((row) => {
     const { videoId: _videoId, ...segment } = segmentJson(row);
-    return { ...segment, ownedByMe: Boolean(row.owned_by_me) };
+    return {
+      ...segment,
+      ownedByMe: Boolean(row.owned_by_me),
+      ...(row.clusterSize > 1 ? { clusterSize: row.clusterSize } : {}),
+    };
   });
   return json({ segments });
 }
@@ -147,7 +162,7 @@ async function getMySegments(request: Request, env: Env): Promise<Response> {
   if (!identity) return json({ error: 'invalid_client_id' }, 400);
   await migrateLegacyIdentity(request, env, identity);
   const result = await env.DB.prepare(`
-    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at
+    SELECT id, video_id, start_ms, end_ms, duration_ms, category, status, upvotes, downvotes, created_at, updated_at
     FROM segments WHERE submitter_hash = ? AND status != 'rejected'
     ORDER BY created_at DESC LIMIT 500
   `).bind(identity).all<SegmentRow>();
@@ -157,7 +172,7 @@ async function getMySegments(request: Request, env: Env): Promise<Response> {
       COALESCE(SUM(skips.seconds_saved), 0) AS seconds_saved
     FROM segment_skips AS skips
     INNER JOIN segments ON segments.id = skips.segment_id
-    WHERE segments.submitter_hash = ?
+    WHERE segments.submitter_hash = ? AND segments.status != 'rejected'
   `).bind(identity).first<{ skip_count: number; helped_people: number; seconds_saved: number }>();
   return json({
     segments: result.results.map((row) => segmentJson(row)),
@@ -167,6 +182,9 @@ async function getMySegments(request: Request, env: Env): Promise<Response> {
       skipCount: Number(impact?.skip_count || 0),
       helpedPeople: Number(impact?.helped_people || 0),
       secondsSaved: Number(impact?.seconds_saved || 0),
+      receivedUpvotes: result.results.reduce((sum, row) => sum + Number(row.upvotes || 0), 0),
+      receivedDownvotes: result.results.reduce((sum, row) => sum + Number(row.downvotes || 0), 0),
+      disputedCount: result.results.filter((row) => row.status === 'disputed').length,
     },
   });
 }
@@ -207,11 +225,14 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
     FROM segments WHERE submitter_hash = ? AND client_request_id = ? LIMIT 1
   `).bind(identity, input.clientRequestId).first<SegmentRow>();
   if (idempotent) return json({ segment: segmentJson(idempotent, true), duplicate: true, idempotent: true });
-  const existing = await env.DB.prepare(`
+  const candidates = await env.DB.prepare(`
     SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at, submitter_hash FROM segments
-    WHERE video_id = ? AND category = ? AND ABS(start_ms - ?) <= 1500 AND ABS(end_ms - ?) <= 1500
-    AND status != 'rejected' LIMIT 1
-  `).bind(input.videoId, input.category, startMs, endMs).first<SubmitterSegmentRow>();
+    WHERE video_id = ? AND category = ? AND status != 'rejected'
+      AND end_ms >= ? AND start_ms <= ?
+    ORDER BY start_ms ASC LIMIT 50
+  `).bind(input.videoId, input.category, startMs - 3000, endMs + 3000).all<SubmitterSegmentRow>();
+  const comparison = { id: '', start_ms: startMs, end_ms: endMs, category: input.category, status: 'trusted', upvotes: 0, downvotes: 0 };
+  const existing = candidates.results.find((row) => segmentsAreSimilar(row, comparison));
   if (existing) return json({ segment: segmentJson(existing, existing.submitter_hash === identity), duplicate: true });
   const id = crypto.randomUUID(), now = new Date().toISOString();
   const videoHash = await sha256(input.videoId);
@@ -233,6 +254,71 @@ async function submitSegment(request: Request, env: Env): Promise<Response> {
     return json({ segment: segmentJson(inserted, true), duplicate: true, idempotent: true });
   }
   return json({ segment: segmentJson(inserted, true), duplicate: false, idempotent: false }, 201);
+}
+
+async function updateOwnSegment(request: Request, env: Env, segmentId: string): Promise<Response> {
+  const identity = await contributorHash(request, env);
+  if (identity === null) return json({ error: 'writes_not_configured' }, 503);
+  if (!identity) return json({ error: 'invalid_client_id' }, 400);
+  if (!await allowedWriteRate(request, env, 'edit', 20, 100)) return json({ error: 'rate_limited' }, 429);
+  const current = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, duration_ms, category, status, upvotes, downvotes, created_at, updated_at
+    FROM segments WHERE id = ? AND submitter_hash = ? AND status != 'rejected'
+  `).bind(segmentId, identity).first<SegmentRow>();
+  if (!current) return json({ error: 'segment_not_found_or_not_owned' }, 404);
+  const body = await bodyJson(request);
+  if (body === BODY_TOO_LARGE) return json({ error: 'payload_too_large' }, 413);
+  const input = parseSegmentRevisionInput(body);
+  if (!input) return json({ error: 'invalid_segment_revision' }, 400);
+  const startMs = Math.round(input.start * 1000), endMs = Math.round(input.end * 1000);
+  const candidates = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, category, status, upvotes, downvotes, created_at, submitter_hash
+    FROM segments WHERE video_id = ? AND category = ? AND id != ? AND status != 'rejected'
+      AND end_ms >= ? AND start_ms <= ? ORDER BY start_ms ASC LIMIT 50
+  `).bind(current.video_id, input.category, segmentId, startMs - 3000, endMs + 3000).all<SubmitterSegmentRow>();
+  const comparison = { id: segmentId, start_ms: startMs, end_ms: endMs, category: input.category, status: 'trusted', upvotes: 0, downvotes: 0 };
+  const duplicate = candidates.results.find((row) => segmentsAreSimilar(row, comparison));
+  if (duplicate) return json({ error: 'similar_segment_exists', segment: segmentJson(duplicate, duplicate.submitter_hash === identity) }, 409);
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO segment_revisions (
+      id, segment_id, editor_hash, action, previous_start_ms, previous_end_ms, previous_category,
+      next_start_ms, next_end_ms, next_category, created_at
+    ) VALUES (?, ?, ?, 'update', ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), segmentId, identity, current.start_ms, current.end_ms, current.category, startMs, endMs, input.category, now),
+    env.DB.prepare(`UPDATE segments SET start_ms = ?, end_ms = ?, duration_ms = ?, category = ?,
+      status = 'trusted', upvotes = 0, downvotes = 0, updated_at = ? WHERE id = ?`)
+      .bind(startMs, endMs, input.duration == null ? current.duration_ms ?? null : Math.round(input.duration * 1000), input.category, now, segmentId),
+    env.DB.prepare('DELETE FROM votes WHERE segment_id = ?').bind(segmentId),
+    env.DB.prepare('DELETE FROM reports WHERE segment_id = ?').bind(segmentId),
+    env.DB.prepare('DELETE FROM segment_skips WHERE segment_id = ?').bind(segmentId),
+  ]);
+  const updated = { ...current, start_ms: startMs, end_ms: endMs, category: input.category, status: 'trusted', upvotes: 0, downvotes: 0, updated_at: now };
+  return json({ segment: segmentJson(updated, true), resetFeedback: true });
+}
+
+async function withdrawOwnSegment(request: Request, env: Env, segmentId: string): Promise<Response> {
+  const identity = await contributorHash(request, env);
+  if (identity === null) return json({ error: 'writes_not_configured' }, 503);
+  if (!identity) return json({ error: 'invalid_client_id' }, 400);
+  if (!await allowedWriteRate(request, env, 'withdraw', 20, 100)) return json({ error: 'rate_limited' }, 429);
+  const current = await env.DB.prepare(`
+    SELECT id, video_id, start_ms, end_ms, duration_ms, category, status, upvotes, downvotes, created_at, updated_at
+    FROM segments WHERE id = ? AND submitter_hash = ? AND status != 'rejected'
+  `).bind(segmentId, identity).first<SegmentRow>();
+  if (!current) return json({ error: 'segment_not_found_or_not_owned' }, 404);
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO segment_revisions (
+      id, segment_id, editor_hash, action, previous_start_ms, previous_end_ms, previous_category, created_at
+    ) VALUES (?, ?, ?, 'withdraw', ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), segmentId, identity, current.start_ms, current.end_ms, current.category, now),
+    env.DB.prepare("UPDATE segments SET status = 'rejected', updated_at = ? WHERE id = ?").bind(now, segmentId),
+    env.DB.prepare('DELETE FROM votes WHERE segment_id = ?').bind(segmentId),
+    env.DB.prepare('DELETE FROM reports WHERE segment_id = ?').bind(segmentId),
+    env.DB.prepare('DELETE FROM segment_skips WHERE segment_id = ?').bind(segmentId),
+  ]);
+  return json({ id: segmentId, withdrawn: true });
 }
 
 async function vote(request: Request, env: Env, segmentId: string): Promise<Response> {
@@ -287,13 +373,16 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url), path = url.pathname;
     try {
-      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 3 });
+      if (request.method === 'GET' && path === '/health') return json({ ok: true, service: 'douyin-ad-skipper-api', version: 4 });
       const videoMatch = path.match(/^\/v1\/videos\/(\d+)\/segments$/);
       if (request.method === 'GET' && videoMatch) return getSegments(videoMatch[1], env);
       const videoHashMatch = path.match(/^\/v1\/videos\/by-hash\/([0-9a-f]{64})\/segments$/i);
       if (request.method === 'GET' && videoHashMatch) return getSegmentsByHash(request, videoHashMatch[1], env);
       if (request.method === 'GET' && path === '/v1/me/segments') return getMySegments(request, env);
       if (request.method === 'POST' && path === '/v1/segments') return submitSegment(request, env);
+      const ownSegmentMatch = path.match(/^\/v1\/me\/segments\/([0-9a-f-]+)$/i);
+      if (request.method === 'PATCH' && ownSegmentMatch) return updateOwnSegment(request, env, ownSegmentMatch[1]);
+      if (request.method === 'DELETE' && ownSegmentMatch) return withdrawOwnSegment(request, env, ownSegmentMatch[1]);
       const voteMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/votes$/i);
       if (request.method === 'POST' && voteMatch) return vote(request, env, voteMatch[1]);
       const skipMatch = path.match(/^\/v1\/segments\/([0-9a-f-]+)\/skips$/i);

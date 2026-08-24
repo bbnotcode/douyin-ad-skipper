@@ -2,6 +2,7 @@
   'use strict';
 
   const DEFAULT_COMMUNITY_API = 'https://douyin-ad-skipper-api.douyin-skip-community.workers.dev';
+  const adapter = globalThis.DouyinSegmentAdapter;
   const DEFAULTS = {
     enabled: true,
     skipLocalSegments: true,
@@ -28,6 +29,8 @@
   let lastSegmentSkipKey = '';
   let mountScheduled = false;
   let manualNoticeKey = '';
+  let diagnosticFingerprint = '';
+  let diagnosticWrittenAt = 0;
   const skipSuppressedUntil = new Map();
   const communityCache = new Map();
   const COMMUNITY_CACHE_MS = 10 * 60 * 1000;
@@ -75,12 +78,10 @@
   }
 
   function extractVideoId(video) {
-    const urlMatches = location.pathname.match(/\/video\/(\d+)/);
-    if (urlMatches) return urlMatches[1];
-
-    // 精选、推荐等页面会以弹层打开视频，ID 位于查询参数中。
-    const queryId = new URLSearchParams(location.search).get('modal_id');
-    if (/^\d{10,}$/.test(queryId || '')) return queryId;
+    const locationId = adapter?.idFromLocation(location.pathname, location.search);
+    if (locationId) return locationId;
+    const nodeId = adapter?.idFromNode(video);
+    if (nodeId) return nodeId;
 
     // 播放器节点常见形式：data-e2e="feed-active-video" class="video_123..."。
     let node = video;
@@ -109,6 +110,30 @@
       if (match) return match[1];
     }
     return null;
+  }
+
+  function writeAdapterDiagnostic(reason, video = null, strategy = '') {
+    const route = location.pathname.startsWith('/video/') ? '/video/:id'
+      : location.pathname.startsWith('/user/') ? '/user/:redacted'
+      : /^\/(recommend|discover|follow|hot|channel)(?:\/|$)/.test(location.pathname) ? `/${location.pathname.split('/')[1]}`
+      : '/other';
+    const snapshot = {
+      recordedAt: new Date().toISOString(),
+      extensionVersion: chrome.runtime.getManifest().version,
+      reason,
+      strategy: strategy || 'none',
+      pathShape: route,
+      modalRoute: new URLSearchParams(location.search).has('modal_id'),
+      visibleVideoCount: [...document.querySelectorAll('video')].filter(isVisible).length,
+      videoIdDetected: Boolean(video && extractVideoId(video)),
+      controlsMounted: Boolean(document.querySelector('.das-player-controls')),
+      viewport: `${innerWidth}x${innerHeight}`,
+    };
+    const fingerprint = JSON.stringify({ ...snapshot, recordedAt: '' });
+    if (fingerprint === diagnosticFingerprint && Date.now() - diagnosticWrittenAt < 30000) return;
+    diagnosticFingerprint = fingerprint;
+    diagnosticWrittenAt = Date.now();
+    void chrome.storage.local.set({ lastAdapterDiagnostic: snapshot });
   }
 
   function formatTime(seconds) {
@@ -196,7 +221,7 @@
       const payload = await response.json();
       const segments = Array.isArray(payload.segments) ? payload.segments
         .filter((item) => CATEGORY_LABELS[item.category] && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
-        .map((item) => ({ start: item.start, end: item.end, category:item.category, source: 'community', id: item.id, status: item.status, ownedByMe: item.ownedByMe === true })) : [];
+        .map((item) => ({ start: item.start, end: item.end, category:item.category, source: 'community', id: item.id, status: item.status, ownedByMe: item.ownedByMe === true, clusterSize:Math.max(1,Number(item.clusterSize||1)) })) : [];
       setCommunityCache(videoId, { loadedAt: Date.now(), retryAt: 0, failureCount: 0, segments });
       renderPreviewBar();
       log('已加载社区片段', videoId, segments.length);
@@ -353,13 +378,19 @@
 
   function ensurePlayerControls() {
     const video = getActiveVideo();
-    if (!video) return null;
+    if (!video) {
+      writeAdapterDiagnostic('no-visible-video');
+      return null;
+    }
     loadCommunitySegments(video);
     if (draftStart !== null && draftVideoId !== extractVideoId(video)) cancelDraft();
-    let player = video.parentElement;
-    while (player && !player.querySelector?.('xg-right-grid')) player = player.parentElement;
-    const rightGrid = player?.querySelector('xg-right-grid');
-    if (!rightGrid) return null;
+    const resolved = adapter?.findControlsHost(video);
+    const player = resolved?.player;
+    const rightGrid = resolved?.host;
+    if (!player || !rightGrid) {
+      writeAdapterDiagnostic('controls-host-missing', video);
+      return null;
+    }
 
     // 抖音会预加载前后多个播放器，只在当前活动播放器保留一组按钮。
     document.querySelectorAll('.das-player-controls').forEach((element) => {
@@ -371,13 +402,14 @@
       controls.className = 'das-player-controls';
       controls.addEventListener('pointerdown', (event) => event.stopPropagation());
       controls.addEventListener('click', handlePlayerControl);
-      const clarity = rightGrid.querySelector('.xgplayer-playclarity-setting');
+      const clarity = rightGrid.querySelector('.xgplayer-playclarity-setting,[class*="playclarity"],[class*="clarity-setting"]');
       // 抖音右侧控制栏使用 row-reverse；放在清晰度节点之后，视觉上才位于其左侧。
       if (clarity) rightGrid.insertBefore(controls, clarity.nextSibling);
       else rightGrid.appendChild(controls);
       renderPlayerControls();
       log('标记按钮已嵌入播放器控制栏');
     }
+    writeAdapterDiagnostic('mounted', video, resolved.strategy);
     ensurePreviewBar(video, player);
     return controls;
   }
@@ -851,7 +883,7 @@
         { label:'举报', run:()=>showReportChoices(segment) },
       );
     }
-    const ownership = segment.ownedByMe ? ' · 你的投稿' : '';
+    const ownership = segment.ownedByMe ? ' · 你的投稿' : segment.clusterSize > 1 ? ` · ${segment.clusterSize} 人相近投稿` : '';
     showToast(`已跳过片段 ${formatTime(segment.start)}–${formatTime(segment.end)}${ownership}`, actions);
     log(segment.source === 'community' ? '跳过社区可信片段' : '跳过本地标记片段', videoId, segment);
   }

@@ -20,7 +20,8 @@ GET /v1/videos/{videoId}/segments
       "end": 31.2,
       "category": "sponsor",
       "status": "trusted",
-      "score": 0.92
+      "score": 0.92,
+      "clusterSize": 2
     }
   ]
 }
@@ -34,6 +35,8 @@ X-Client-ID: 匿名贡献者 UUID（已启用社区时）
 ```
 
 带合法匿名贡献者 ID 时，每个结果额外返回 `ownedByMe`，供客户端隐藏对自己投稿的投票和举报入口；服务端不会返回提交者哈希。原始作品 ID 查询仅保留用于旧客户端兼容和迁移。
+
+同一作品、同一分类中时间高度重叠或起止边界接近的投稿会聚合为一个代表片段；`clusterSize` 大于 1 时表示该结果包含多条相近投稿。
 
 ## 提交片段
 
@@ -69,6 +72,29 @@ X-Client-ID: 匿名贡献者 UUID
 - `skipCount`：这些片段实际被其他匿名用户跳过的次数；
 - `helpedPeople`：去重后的匿名用户数；
 - `secondsSaved`：实际累计节省秒数。
+- `receivedUpvotes` / `receivedDownvotes`：投稿收到的赞成与反对总数；
+- `disputedCount`：当前处于争议状态的投稿数量。
+
+## 修改或撤回自己的投稿
+
+```http
+PATCH /v1/me/segments/{segmentId}
+X-Client-ID: 匿名贡献者 UUID
+Content-Type: application/json
+```
+
+```json
+{ "start": 19.2, "end": 30.8, "category": "sponsor" }
+```
+
+修改成功后会清除该片段原有的投票、举报和帮助统计，并记录修改前后的时间与分类。
+
+```http
+DELETE /v1/me/segments/{segmentId}
+X-Client-ID: 匿名贡献者 UUID
+```
+
+撤回会把片段标记为 `rejected` 并停止分发，不直接删除修订记录。
 
 ## 记录一次有效跳过
 
